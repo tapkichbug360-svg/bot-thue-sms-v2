@@ -1,0 +1,8 @@
+﻿__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+database/__pycache__/
+handlers/__pycache__/
+*.db.backup
