@@ -34,19 +34,40 @@ db_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database')
 if not os.path.exists(db_dir):
     os.makedirs(db_dir)
 
-# Đọc file .env
-print("Đang đọc file .env...")
-try:
-    with open('.env', 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#'):
-                key, value = line.split('=', 1)
-                os.environ[key] = value.strip()
-                print(f"Đã đọc: {key}")
-except Exception as e:
-    print(f"LỖI ĐỌC FILE .ENV: {e}")
-    sys.exit(1)
+# ===== ĐỌC FILE .ENV - CHUẨN CHO CẢ LOCAL VÀ RENDER =====
+print("🔧 KIỂM TRA CẤU HÌNH MÔI TRƯỜNG...")
+print("="*50)
+
+# Nếu có file .env (chạy local)
+if os.path.exists(".env"):
+    try:
+        with open(".env", "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    key, value = line.split("=", 1)
+                    os.environ[key] = value.strip()
+                    print(f"✅ Đã đọc từ .env: {key}")
+        print("📦 Dùng cấu hình từ file .env (local mode)")
+    except Exception as e:
+        print(f"⚠️ Lỗi đọc .env: {e}")
+        print("☁️ Chuyển sang dùng biến môi trường Render")
+else:
+    # Chạy trên Render - lấy từ Environment Variables
+    print("☁️ Không tìm thấy file .env, dùng biến môi trường Render")
+
+# Kiểm tra các biến bắt buộc
+required_vars = ['BOT_TOKEN', 'MB_ACCOUNT', 'MB_NAME', 'MB_BIN']
+missing_vars = [var for var in required_vars if not os.getenv(var)]
+
+if missing_vars:
+    print(f"⚠️ THIẾU BIẾN MÔI TRƯỜNG: {missing_vars}")
+    print("⚠️ Bot sẽ chạy nhưng một số chức năng có thể không hoạt động")
+    # KHÔNG exit(1) - chỉ cảnh báo để Render không crash
+else:
+    print("✅ Tất cả biến môi trường đã sẵn sàng")
+
+print("="*50)
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
@@ -132,10 +153,10 @@ def check_expired_rentals():
                         bot = Bot(token=os.getenv('BOT_TOKEN'))
                         message = (
                             f"⏰ **SỐ HẾT HẠN & HOÀN TIỀN**\n\n"
-                            f"• **Số:** `{rental.phone_number}`\n"
+                            f"• **Số:** {rental.phone_number}\n"
                             f"• **Dịch vụ:** {rental.service_name}\n"
-                            f"• **Tiền hoàn:** `{refund:,}đ`\n"
-                            f"• **Số dư mới:** `{user.balance:,}đ`"
+                            f"• **Tiền hoàn:** {refund:,}đ\n"
+                            f"• **Số dư mới:** {user.balance:,}đ"
                         )
                         asyncio.run(send_telegram_message(user.user_id, message))
                     except Exception as e:
@@ -541,10 +562,10 @@ def auto_check_new_transactions():
                             bot = Bot(token=os.getenv('BOT_TOKEN'))
                             message = (
                                 f"💰 **NẠP TIỀN THÀNH CÔNG!**\n\n"
-                                f"• **Số tiền:** `{trans.amount:,}đ`\n"
-                                f"• **Mã GD:** `{trans.transaction_code}`\n"
-                                f"• **Số dư mới:** `{user.balance:,}đ`\n"
-                                f"• **Thời gian:** `{trans.updated_at.strftime('%H:%M:%S %d/%m/%Y')}`"
+                                f"• **Số tiền:** {trans.amount:,}đ\n"
+                                f"• **Mã GD:** {trans.transaction_code}\n"
+                                f"• **Số dư mới:** {user.balance:,}đ\n"
+                                f"• **Thời gian:** {trans.updated_at.strftime('%H:%M:%S %d/%m/%Y')}"
                             )
                             asyncio.run(send_telegram_message(user.user_id, message))
                             processed_transactions.add(trans.id)
@@ -605,6 +626,7 @@ if __name__ == '__main__':
     
     port = int(os.getenv('PORT', 8080))
     
+    # Chạy Flask server trong thread riêng
     flask_thread = threading.Thread(
         target=lambda: app.run(
             host='0.0.0.0', 
@@ -621,6 +643,7 @@ if __name__ == '__main__':
     logger.info("🚫 Bot Telegram ĐÃ TẮT trên Render - Chỉ chạy local")
     logger.info("📱 Để chạy bot, gõ: python bot.py ở local")
 
+    # Giữ Flask chạy mãi
     try:
         while True:
             time.sleep(60)
