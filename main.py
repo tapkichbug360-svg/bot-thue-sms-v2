@@ -69,7 +69,7 @@ with app.app_context():
 
 setup_sepay_webhook(app)
 
-@@app.route('/')
+@app.route('/')
 def home():
     return f"Bot đang chạy! MBBank: 666666291005 - NGUYEN THE LAM"
 
@@ -230,5 +230,6 @@ def test_deposit():
             
     except Exception as e:
         return {"error": str(e)}, 500
+
 
 
