@@ -6,3 +6,6 @@
 database/__pycache__/
 handlers/__pycache__/
 *.db.backup
+*.db.clean
+# Không loại trừ database chính
+# database/bot.db
