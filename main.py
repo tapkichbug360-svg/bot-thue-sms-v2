@@ -4,7 +4,8 @@ import sys
 import atexit
 import asyncio
 import time
-from datetime import datetime
+import requests
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from database.models import db, User, Rental, Transaction
 from handlers.sepay import setup_sepay_webhook
@@ -116,23 +117,99 @@ def check_expired_rentals():
         except Exception as e:
             logger.error(f"Lỗi kiểm tra số hết hạn: {e}")
 
+# ===== HÀM KIỂM TRA GIAO DỊCH MỚI =====
+last_check_time = datetime.now() - timedelta(minutes=1)
+processed_transactions = set()
+
+def check_new_transactions():
+    """Kiểm tra giao dịch mới mỗi 10 giây và gửi thông báo"""
+    global last_check_time, processed_transactions
+    
+    with app.app_context():
+        try:
+            # Lấy các giao dịch success từ sau lần kiểm tra trước
+            new_transactions = Transaction.query.filter(
+                Transaction.status == 'success',
+                Transaction.created_at > last_check_time
+            ).all()
+            
+            if new_transactions:
+                logger.info(f"🔍 Phát hiện {len(new_transactions)} giao dịch mới")
+                
+                for trans in new_transactions:
+                    # Tránh gửi trùng
+                    if trans.id in processed_transactions:
+                        continue
+                        
+                    user = User.query.get(trans.user_id)
+                    if user and user.user_id:
+                        try:
+                            bot = Bot(token=os.getenv('BOT_TOKEN'))
+                            message = (
+                                f"💰 **NẠP TIỀN THÀNH CÔNG!**\n\n"
+                                f"• **Số tiền:** `{trans.amount:,}đ`\n"
+                                f"• **Mã GD:** `{trans.transaction_code}`\n"
+                                f"• **Số dư mới:** `{user.balance:,}đ`\n"
+                                f"• **Thời gian:** `{trans.updated_at.strftime('%H:%M:%S %d/%m/%Y')}`"
+                            )
+                            # Gửi bất đồng bộ
+                            asyncio.run_coroutine_threadsafe(
+                                send_telegram_async(user.user_id, message),
+                                asyncio.new_event_loop()
+                            )
+                            processed_transactions.add(trans.id)
+                            logger.info(f"✅ Đã gửi thông báo giao dịch {trans.transaction_code}")
+                        except Exception as e:
+                            logger.error(f"❌ Lỗi gửi Telegram cho giao dịch {trans.transaction_code}: {e}")
+                
+                # Giới hạn kích thước set
+                if len(processed_transactions) > 1000:
+                    processed_transactions = set(list(processed_transactions)[-500:])
+            
+            # Cập nhật thời gian kiểm tra
+            last_check_time = datetime.now()
+            
+        except Exception as e:
+            logger.error(f"Lỗi kiểm tra giao dịch mới: {e}")
+
+async def send_telegram_async(chat_id, message):
+    """Gửi Telegram bất đồng bộ"""
+    try:
+        bot = Bot(token=os.getenv('BOT_TOKEN'))
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
+    except Exception as e:
+        logger.error(f"Lỗi gửi Telegram async: {e}")
+
 # ===== THIẾT LẬP SCHEDULER =====
-def setup_scheduler():
-    scheduler = BackgroundScheduler()
-    scheduler.start()
-    scheduler.add_job(
-        func=check_expired_rentals,
-        trigger=IntervalTrigger(minutes=5),
-        id='check_expired_rentals',
-        name='Kiểm tra số hết hạn và hoàn tiền',
-        replace_existing=True
-    )
-    atexit.register(lambda: scheduler.shutdown())
-    logger.info("⏰ Scheduler kiểm tra số hết hạn đã được khởi động (5 phút/lần)")
+scheduler = BackgroundScheduler()
+scheduler.start()
 
-setup_scheduler()
+# Job kiểm tra số hết hạn (5 phút)
+scheduler.add_job(
+    func=check_expired_rentals,
+    trigger=IntervalTrigger(minutes=5),
+    id='check_expired_rentals',
+    name='Kiểm tra số hết hạn và hoàn tiền',
+    replace_existing=True
+)
 
-# ===== API TEST NẠP TIỀN (CÓ THÔNG BÁO) =====
+# Job kiểm tra giao dịch mới (10 giây)
+scheduler.add_job(
+    func=check_new_transactions,
+    trigger=IntervalTrigger(seconds=10),
+    id='check_new_transactions',
+    name='Kiểm tra giao dịch mới và gửi thông báo',
+    replace_existing=True
+)
+
+# Dừng scheduler khi tắt app
+atexit.register(lambda: scheduler.shutdown())
+
+logger.info("⏰ Scheduler đã được khởi động:")
+logger.info("  - Kiểm tra số hết hạn: 5 phút/lần")
+logger.info("  - Kiểm tra giao dịch mới: 10 giây/lần")
+
+# ===== API TEST NẠP TIỀN =====
 @app.route('/test-deposit', methods=['POST'])
 def test_deposit():
     try:
@@ -156,14 +233,15 @@ def test_deposit():
                 status='success',
                 transaction_code=code,
                 description=f"Test nạp {amount}đ",
-                created_at=datetime.now()
+                created_at=datetime.now(),
+                updated_at=datetime.now()
             )
             db.session.add(transaction)
             db.session.commit()
 
             logger.info(f"✅ TEST: ĐÃ CỘNG {amount}đ CHO USER {user_id}")
-
-            # Gửi thông báo Telegram
+            
+            # Gửi thông báo qua scheduler
             try:
                 bot = Bot(token=os.getenv('BOT_TOKEN'))
                 message = (
@@ -185,7 +263,6 @@ def test_deposit():
 # ===== API ĐỒNG BỘ GIAO DỊCH =====
 @app.route('/sync-transactions', methods=['POST'])
 def sync_transactions():
-    """Đồng bộ giao dịch từ local lên Render"""
     try:
         data = request.json
         transactions = data.get('transactions', [])
@@ -195,7 +272,6 @@ def sync_transactions():
             existing = 0
             
             for t in transactions:
-                # Kiểm tra đã tồn tại chưa
                 existing_trans = Transaction.query.filter_by(transaction_code=t['code']).first()
                 if not existing_trans:
                     user = User.query.filter_by(user_id=t['user_id']).first()
@@ -213,13 +289,12 @@ def sync_transactions():
                         synced += 1
                         logger.info(f"✅ Đã đồng bộ giao dịch {t['code']}")
                     else:
-                        logger.warning(f"⚠️ Không tìm thấy user {t['user_id']} cho giao dịch {t['code']}")
+                        logger.warning(f"⚠️ Không tìm thấy user {t['user_id']}")
                 else:
                     existing += 1
-                    logger.info(f"⏭️ Giao dịch {t['code']} đã tồn tại")
             
             db.session.commit()
-            logger.info(f"✅ Đồng bộ hoàn tất: {synced} mới, {existing} đã tồn tại")
+            logger.info(f"✅ Đồng bộ hoàn tất: {synced} mới, {existing} cũ")
             
             return jsonify({
                 "success": True, 
@@ -235,7 +310,6 @@ def sync_transactions():
 # ===== API KIỂM TRA GIAO DỊCH =====
 @app.route('/check-transaction', methods=['POST'])
 def check_transaction():
-    """Kiểm tra giao dịch có tồn tại không"""
     try:
         data = request.json
         code = data.get('code')
@@ -255,13 +329,13 @@ def check_transaction():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ===== PHẦN NÀY CHỈ CHẠY KHI FILE ĐƯỢC CHẠY TRỰC TIẾP =====
+# ===== PHẦN CHẠY ỨNG DỤNG =====
 if __name__ == '__main__':
     import threading
     
     port = int(os.getenv('PORT', 8080))
     
-    # Chạy Flask server trong thread riêng
+    # Chạy Flask server
     flask_thread = threading.Thread(
         target=lambda: app.run(
             host='0.0.0.0', 
@@ -277,8 +351,9 @@ if __name__ == '__main__':
     logger.info(f"🌐 Flask server đang chạy trên port {port}")
     logger.info("🚫 Bot Telegram ĐÃ TẮT trên Render - Chỉ chạy local")
     logger.info("📱 Để chạy bot, gõ: python bot.py ở local")
+    logger.info("⏱️ Auto-check giao dịch mới: 10 giây/lần")
 
-    # Giữ Flask chạy mãi - KHÔNG gọi main()
+    # Giữ Flask chạy
     try:
         while True:
             time.sleep(60)
