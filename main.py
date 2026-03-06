@@ -117,24 +117,24 @@ def check_expired_rentals():
         except Exception as e:
             logger.error(f"Lỗi kiểm tra số hết hạn: {e}")
 
-# ===== HÀM KIỂM TRA GIAO DỊCH MỚI =====
-last_check_time = datetime.now() - timedelta(minutes=1)
+# ===== BIẾN TOÀN CỤC CHO AUTO SYNC =====
+last_sync_check = datetime.now()
 processed_transactions = set()
 
-def check_new_transactions():
-    """Kiểm tra giao dịch mới mỗi 10 giây và gửi thông báo"""
-    global last_check_time, processed_transactions
+def auto_sync_and_check():
+    """Tự động đồng bộ và kiểm tra giao dịch mới mỗi 10 giây"""
+    global last_sync_check, processed_transactions
     
     with app.app_context():
         try:
-            # Lấy các giao dịch success từ sau lần kiểm tra trước
+            # 1. KIỂM TRA GIAO DỊCH THÀNH CÔNG MỚI
             new_transactions = Transaction.query.filter(
                 Transaction.status == 'success',
-                Transaction.created_at > last_check_time
+                Transaction.updated_at > last_sync_check
             ).all()
             
             if new_transactions:
-                logger.info(f"🔍 Phát hiện {len(new_transactions)} giao dịch mới")
+                logger.info(f"🔍 Phát hiện {len(new_transactions)} giao dịch thành công mới")
                 
                 for trans in new_transactions:
                     # Tránh gửi trùng
@@ -152,62 +152,129 @@ def check_new_transactions():
                                 f"• **Số dư mới:** `{user.balance:,}đ`\n"
                                 f"• **Thời gian:** `{trans.updated_at.strftime('%H:%M:%S %d/%m/%Y')}`"
                             )
-                            # Gửi bất đồng bộ
-                            asyncio.run_coroutine_threadsafe(
-                                send_telegram_async(user.user_id, message),
-                                asyncio.new_event_loop()
-                            )
+                            asyncio.run(send_telegram_message(user.user_id, message))
                             processed_transactions.add(trans.id)
                             logger.info(f"✅ Đã gửi thông báo giao dịch {trans.transaction_code}")
                         except Exception as e:
-                            logger.error(f"❌ Lỗi gửi Telegram cho giao dịch {trans.transaction_code}: {e}")
+                            logger.error(f"❌ Lỗi gửi Telegram: {e}")
                 
                 # Giới hạn kích thước set
                 if len(processed_transactions) > 1000:
                     processed_transactions = set(list(processed_transactions)[-500:])
             
-            # Cập nhật thời gian kiểm tra
-            last_check_time = datetime.now()
+            # 2. CẬP NHẬT THỜI GIAN
+            last_sync_check = datetime.now()
             
         except Exception as e:
-            logger.error(f"Lỗi kiểm tra giao dịch mới: {e}")
+            logger.error(f"Lỗi trong auto_sync_and_check: {e}")
 
-async def send_telegram_async(chat_id, message):
-    """Gửi Telegram bất đồng bộ"""
+async def send_telegram_message(chat_id, message):
+    """Gửi tin nhắn Telegram bất đồng bộ"""
     try:
         bot = Bot(token=os.getenv('BOT_TOKEN'))
         await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
     except Exception as e:
-        logger.error(f"Lỗi gửi Telegram async: {e}")
+        logger.error(f"Lỗi gửi Telegram: {e}")
 
-# ===== THIẾT LẬP SCHEDULER =====
-scheduler = BackgroundScheduler()
-scheduler.start()
+# ===== API NHẬN ĐỒNG BỘ TỪ LOCAL =====
+@app.route('/sync-pending', methods=['POST'])
+def sync_pending():
+    """API nhận danh sách giao dịch pending từ local"""
+    try:
+        data = request.json
+        transactions = data.get('transactions', [])
+        
+        with app.app_context():
+            synced = 0
+            skipped = 0
+            
+            for t in transactions:
+                # Kiểm tra đã tồn tại chưa
+                existing = Transaction.query.filter_by(transaction_code=t['code']).first()
+                if not existing:
+                    user = User.query.filter_by(user_id=t['user_id']).first()
+                    if user:
+                        new_trans = Transaction(
+                            user_id=user.id,
+                            amount=t['amount'],
+                            type='deposit',
+                            status='pending',
+                            transaction_code=t['code'],
+                            description=f"Auto-synced: {t['code']}",
+                            created_at=datetime.now()
+                        )
+                        db.session.add(new_trans)
+                        synced += 1
+                        logger.info(f"✅ Đã đồng bộ giao dịch {t['code']} từ local")
+                    else:
+                        logger.warning(f"⚠️ Không tìm thấy user {t['user_id']}")
+                        skipped += 1
+                else:
+                    skipped += 1
+            
+            db.session.commit()
+            logger.info(f"📊 Đồng bộ hoàn tất: {synced} mới, {skipped} bỏ qua")
+            
+            return jsonify({
+                "success": True,
+                "synced": synced,
+                "skipped": skipped,
+                "total": len(transactions)
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"❌ Lỗi đồng bộ: {e}")
+        return jsonify({"error": str(e)}), 500
 
-# Job kiểm tra số hết hạn (5 phút)
-scheduler.add_job(
-    func=check_expired_rentals,
-    trigger=IntervalTrigger(minutes=5),
-    id='check_expired_rentals',
-    name='Kiểm tra số hết hạn và hoàn tiền',
-    replace_existing=True
-)
+# ===== API KIỂM TRA GIAO DỊCH =====
+@app.route('/check-transaction', methods=['POST'])
+def check_transaction():
+    """Kiểm tra giao dịch có tồn tại không"""
+    try:
+        data = request.json
+        code = data.get('code')
+        
+        with app.app_context():
+            transaction = Transaction.query.filter_by(transaction_code=code).first()
+            if transaction:
+                user = User.query.get(transaction.user_id)
+                return jsonify({
+                    "exists": True,
+                    "status": transaction.status,
+                    "amount": transaction.amount,
+                    "user_id": user.user_id if user else None
+                }), 200
+            return jsonify({"exists": False}), 404
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-# Job kiểm tra giao dịch mới (10 giây)
-scheduler.add_job(
-    func=check_new_transactions,
-    trigger=IntervalTrigger(seconds=10),
-    id='check_new_transactions',
-    name='Kiểm tra giao dịch mới và gửi thông báo',
-    replace_existing=True
-)
-
-# Dừng scheduler khi tắt app
-atexit.register(lambda: scheduler.shutdown())
-
-logger.info("⏰ Scheduler đã được khởi động:")
-logger.info("  - Kiểm tra số hết hạn: 5 phút/lần")
-logger.info("  - Kiểm tra giao dịch mới: 10 giây/lần")
+# ===== API LẤY DANH SÁCH PENDING =====
+@app.route('/get-pending', methods=['GET'])
+def get_pending():
+    """Lấy danh sách giao dịch pending (cho local sync)"""
+    try:
+        with app.app_context():
+            pending = Transaction.query.filter_by(status='pending').all()
+            result = []
+            for trans in pending:
+                user = User.query.get(trans.user_id)
+                if user:
+                    result.append({
+                        "code": trans.transaction_code,
+                        "amount": trans.amount,
+                        "user_id": user.user_id,
+                        "created_at": trans.created_at.isoformat() if trans.created_at else None
+                    })
+            
+            return jsonify({
+                "success": True,
+                "count": len(result),
+                "transactions": result
+            }), 200
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ===== API TEST NẠP TIỀN =====
 @app.route('/test-deposit', methods=['POST'])
@@ -241,7 +308,7 @@ def test_deposit():
 
             logger.info(f"✅ TEST: ĐÃ CỘNG {amount}đ CHO USER {user_id}")
             
-            # Gửi thông báo qua scheduler
+            # Gửi thông báo Telegram
             try:
                 bot = Bot(token=os.getenv('BOT_TOKEN'))
                 message = (
@@ -260,74 +327,36 @@ def test_deposit():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ===== API ĐỒNG BỘ GIAO DỊCH =====
-@app.route('/sync-transactions', methods=['POST'])
-def sync_transactions():
-    try:
-        data = request.json
-        transactions = data.get('transactions', [])
-        
-        with app.app_context():
-            synced = 0
-            existing = 0
-            
-            for t in transactions:
-                existing_trans = Transaction.query.filter_by(transaction_code=t['code']).first()
-                if not existing_trans:
-                    user = User.query.filter_by(user_id=t['user_id']).first()
-                    if user:
-                        new_trans = Transaction(
-                            user_id=user.id,
-                            amount=t['amount'],
-                            type='deposit',
-                            status='pending',
-                            transaction_code=t['code'],
-                            description=f"Synced from local: {t['code']}",
-                            created_at=datetime.now()
-                        )
-                        db.session.add(new_trans)
-                        synced += 1
-                        logger.info(f"✅ Đã đồng bộ giao dịch {t['code']}")
-                    else:
-                        logger.warning(f"⚠️ Không tìm thấy user {t['user_id']}")
-                else:
-                    existing += 1
-            
-            db.session.commit()
-            logger.info(f"✅ Đồng bộ hoàn tất: {synced} mới, {existing} cũ")
-            
-            return jsonify({
-                "success": True, 
-                "synced": synced,
-                "existing": existing,
-                "total": len(transactions)
-            }), 200
-            
-    except Exception as e:
-        logger.error(f"❌ Lỗi đồng bộ: {e}")
-        return jsonify({"error": str(e)}), 500
+# ===== THIẾT LẬP SCHEDULER =====
+scheduler = BackgroundScheduler()
+scheduler.start()
 
-# ===== API KIỂM TRA GIAO DỊCH =====
-@app.route('/check-transaction', methods=['POST'])
-def check_transaction():
-    try:
-        data = request.json
-        code = data.get('code')
-        
-        with app.app_context():
-            transaction = Transaction.query.filter_by(transaction_code=code).first()
-            if transaction:
-                user = User.query.get(transaction.user_id)
-                return jsonify({
-                    "exists": True,
-                    "status": transaction.status,
-                    "amount": transaction.amount,
-                    "user_id": user.user_id if user else None
-                }), 200
-            return jsonify({"exists": False}), 404
-            
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# Job kiểm tra số hết hạn (5 phút)
+scheduler.add_job(
+    func=check_expired_rentals,
+    trigger=IntervalTrigger(minutes=5),
+    id='check_expired_rentals',
+    name='Kiểm tra số hết hạn và hoàn tiền',
+    replace_existing=True
+)
+
+# Job tự động kiểm tra và đồng bộ (10 giây)
+scheduler.add_job(
+    func=auto_sync_and_check,
+    trigger=IntervalTrigger(seconds=10),
+    id='auto_sync_and_check',
+    name='Tự động kiểm tra giao dịch và đồng bộ',
+    replace_existing=True
+)
+
+# Dừng scheduler khi tắt app
+atexit.register(lambda: scheduler.shutdown())
+
+logger.info("⏰ SCHEDULER ĐÃ KHỞI ĐỘNG:")
+logger.info("  - Kiểm tra số hết hạn: 5 phút/lần")
+logger.info("  - Auto check + sync: 10 giây/lần")
+logger.info("  - API sync-pending: nhận dữ liệu từ local")
+logger.info("  - API check-transaction: kiểm tra giao dịch")
 
 # ===== PHẦN CHẠY ỨNG DỤNG =====
 if __name__ == '__main__':
@@ -351,7 +380,7 @@ if __name__ == '__main__':
     logger.info(f"🌐 Flask server đang chạy trên port {port}")
     logger.info("🚫 Bot Telegram ĐÃ TẮT trên Render - Chỉ chạy local")
     logger.info("📱 Để chạy bot, gõ: python bot.py ở local")
-    logger.info("⏱️ Auto-check giao dịch mới: 10 giây/lần")
+    logger.info("⏱️ Auto check + sync: 10 giây/lần")
 
     # Giữ Flask chạy
     try:
