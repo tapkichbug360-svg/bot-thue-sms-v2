@@ -1,8 +1,9 @@
-﻿import logging
+import logging
 import os
 import sys
 import atexit
 import asyncio
+import time
 from datetime import datetime
 from flask import Flask, request, jsonify
 from database.models import db, User, Rental, Transaction
@@ -182,43 +183,13 @@ def test_deposit():
     except Exception as e:
         return {"error": str(e)}, 500
 
-# ===== BOT TELEGRAM =====
-def main():
-    token = os.getenv('BOT_TOKEN')
-    if not token:
-        logger.error("❌ KHÔNG TÌM THẤY BOT_TOKEN trong file .env!")
-        return
-
-    application = Application.builder().token(token).build()
-
-    # Command handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("rent", rent_command))
-    application.add_handler(CommandHandler("balance", balance_command))
-    application.add_handler(CommandHandler("deposit", deposit_command))
-    application.add_handler(CommandHandler("menu", menu_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("cancel", cancel))
-
-    # Callback query handlers
-    application.add_handler(CallbackQueryHandler(rent_service_callback, pattern="^rent_service_"))
-    application.add_handler(CallbackQueryHandler(rent_network_callback, pattern="^rent_network_"))
-    application.add_handler(CallbackQueryHandler(rent_confirm_callback, pattern="^rent_confirm_"))
-    application.add_handler(CallbackQueryHandler(rent_check_callback, pattern="^rent_check_"))
-    application.add_handler(CallbackQueryHandler(rent_view_callback, pattern="^rent_view_"))
-    application.add_handler(CallbackQueryHandler(rent_cancel_callback, pattern="^rent_cancel_"))
-    application.add_handler(CallbackQueryHandler(rent_list_callback, pattern="^menu_rent_list$"))
-    application.add_handler(CallbackQueryHandler(deposit_amount_callback, pattern="^deposit_amount_"))
-    application.add_handler(CallbackQueryHandler(deposit_check_callback, pattern="^deposit_check_"))
-    application.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
-
-    logger.info("🚀 Bot đang khởi động...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
+# ===== PHẦN NÀY CHỈ CHẠY KHI FILE ĐƯỢC CHẠY TRỰC TIẾP =====
 if __name__ == '__main__':
     import threading
     
     port = int(os.getenv('PORT', 8080))
+    
+    # Chạy Flask server trong thread riêng
     flask_thread = threading.Thread(
         target=lambda: app.run(
             host='0.0.0.0', 
@@ -232,13 +203,12 @@ if __name__ == '__main__':
     flask_thread.start()
 
     logger.info(f"🌐 Flask server đang chạy trên port {port}")
+    logger.info("🚫 Bot Telegram ĐÃ TẮT trên Render - Chỉ chạy local")
+    logger.info("📱 Để chạy bot, gõ: python bot.py ở local")
 
+    # Giữ Flask chạy mãi - KHÔNG gọi main()
     try:
-        main()
+        while True:
+            time.sleep(60)
     except KeyboardInterrupt:
-        logger.info("👋 Đã dừng bot")
-    except Exception as e:
-        logger.error(f"❌ Lỗi: {e}")
-        import traceback
-        traceback.print_exc()
-
+        logger.info("👋 Đã dừng Flask server")
