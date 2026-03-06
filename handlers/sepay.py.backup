@@ -1,0 +1,103 @@
+﻿from flask import request, jsonify
+import logging
+from database.models import User, Transaction, db
+from datetime import datetime
+import os
+import re
+
+logger = logging.getLogger(__name__)
+
+MB_ACCOUNT = os.getenv('MB_ACCOUNT', '666666291005')
+MB_NAME = os.getenv('MB_NAME', 'NGUYEN THE LAM')
+
+def setup_sepay_webhook(app):
+    @app.route('/webhook/sepay', methods=['POST'])
+    def sepay_webhook():
+        try:
+            data = request.json
+            logger.info("="*50)
+            logger.info("📩 NHẬN WEBHOOK TỪ SEPAY")
+            logger.info(f"Dữ liệu nhận được: {data}")
+            
+            # Lấy thông tin giao dịch
+            transfer_type = data.get('transferType')
+            account_number = data.get('accountNumber')
+            amount = int(float(data.get('transferAmount', 0)))
+            content = data.get('content', '').strip()
+            transaction_id = data.get('transactionId', '')
+            
+            logger.info(f"Loại GD: {transfer_type}")
+            logger.info(f"TK nhận: {account_number}")
+            logger.info(f"Số tiền: {amount}đ")
+            logger.info(f"Nội dung: {content}")
+            logger.info(f"Mã GD SePay: {transaction_id}")
+            
+            # Chỉ xử lý giao dịch đến
+            if transfer_type != 'in':
+                logger.info(f"⏭️ Bỏ qua giao dịch loại {transfer_type}")
+                return jsonify({"status": "ignored"}), 200
+            
+            # Kiểm tra tài khoản nhận
+            if account_number != MB_ACCOUNT:
+                logger.warning(f"❌ TK không khớp: {account_number} != {MB_ACCOUNT}")
+                return jsonify({"status": "ok"}), 200
+            
+            # Tìm mã NAP trong nội dung
+            match = re.search(r'NAP\s*([A-Z0-9]{8})', content.upper())
+            
+            if not match:
+                logger.warning(f"❌ KHÔNG TÌM THẤY MÃ NAP trong: {content}")
+                return jsonify({"status": "ok"}), 200
+            
+            transaction_code = match.group(1)
+            logger.info(f"✅ Tìm thấy mã NAP: {transaction_code}")
+            
+            with app.app_context():
+                # Tìm transaction
+                transaction = Transaction.query.filter_by(
+                    transaction_code=transaction_code,
+                    status='pending'
+                ).first()
+                
+                if not transaction:
+                    logger.error(f"❌ KHÔNG TÌM THẤY transaction với mã: {transaction_code}")
+                    # Liệt kê các transaction gần đây để debug
+                    recent = Transaction.query.order_by(Transaction.created_at.desc()).limit(3).all()
+                    logger.info("📋 Các transaction gần đây:")
+                    for t in recent:
+                        logger.info(f"   - {t.transaction_code}: {t.amount}đ, {t.status}")
+                    return jsonify({"status": "ok"}), 200
+                
+                logger.info(f"✅ Tìm thấy transaction: ID={transaction.id}, amount={transaction.amount}, status={transaction.status}")
+                
+                # Kiểm tra số tiền
+                if abs(transaction.amount - amount) > 5000:
+                    logger.error(f"❌ Số tiền không khớp: {amount} != {transaction.amount}")
+                    return jsonify({"status": "ok"}), 200
+                
+                # Cộng tiền
+                user = User.query.get(transaction.user_id)
+                if not user:
+                    logger.error(f"❌ Không tìm thấy user ID: {transaction.user_id}")
+                    return jsonify({"status": "ok"}), 200
+                
+                old_balance = user.balance
+                user.balance += transaction.amount
+                transaction.status = 'success'
+                transaction.updated_at = datetime.now()
+                
+                db.session.commit()
+                
+                logger.info("="*50)
+                logger.info("✅ NẠP TIỀN THÀNH CÔNG!")
+                logger.info(f"   User: {user.user_id}")
+                logger.info(f"   Số dư: {old_balance}đ → {user.balance}đ (+{transaction.amount}đ)")
+                logger.info("="*50)
+            
+            return jsonify({"status": "success"}), 200
+            
+        except Exception as e:
+            logger.error(f"❌ LỖI XỬ LÝ WEBHOOK: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({"status": "error", "message": str(e)}), 500
