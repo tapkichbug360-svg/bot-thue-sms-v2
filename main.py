@@ -2,12 +2,14 @@
 import os
 import sys
 import atexit
+import asyncio
 from datetime import datetime
-from flask import Flask
-from database.models import db, User, Rental
+from flask import Flask, request, jsonify
+from database.models import db, User, Rental, Transaction
 from handlers.sepay import setup_sepay_webhook
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from telegram import Bot
 
 # Telegram imports
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
@@ -71,50 +73,52 @@ setup_sepay_webhook(app)
 
 @app.route('/')
 def home():
-    return f"Bot đang chạy! MBBank: 666666291005 - NGUYEN THE LAM"
+    return "Bot đang chạy! MBBank: 666666291005 - NGUYEN THE LAM"
 
 # ===== HÀM KIỂM TRA SỐ HẾT HẠN =====
 def check_expired_rentals():
     """Kiểm tra và tự động hoàn tiền cho các số hết hạn"""
     with app.app_context():
         try:
-            # Tìm các rental đang waiting nhưng đã hết hạn
             expired_rentals = Rental.query.filter(
                 Rental.status == 'waiting',
                 Rental.expires_at < datetime.now()
             ).all()
-            
+
             for rental in expired_rentals:
-                # Tìm user
                 user = User.query.filter_by(user_id=rental.user_id).first()
                 if user:
-                    # Hoàn tiền
                     refund = rental.price_charged
                     old_balance = user.balance
                     user.balance += refund
-                    
-                    # Cập nhật trạng thái
                     rental.status = 'expired'
                     rental.updated_at = datetime.now()
-                    
                     db.session.commit()
-                    
+
                     logger.info(f"💰 TỰ ĐỘNG HOÀN {refund}đ CHO USER {user.user_id} (số {rental.phone_number} hết hạn)")
-                    logger.info(f"   Số dư: {old_balance}đ → {user.balance}đ")
                     
+                    # Gửi thông báo Telegram
+                    try:
+                        bot = Bot(token=os.getenv('BOT_TOKEN'))
+                        message = (
+                            f"⏰ **SỐ HẾT HẠN & HOÀN TIỀN**\n\n"
+                            f"• **Số:** `{rental.phone_number}`\n"
+                            f"• **Dịch vụ:** {rental.service_name}\n"
+                            f"• **Tiền hoàn:** `{refund:,}đ`\n"
+                            f"• **Số dư mới:** `{user.balance:,}đ`"
+                        )
+                        asyncio.run(bot.send_message(chat_id=user.user_id, text=message, parse_mode='Markdown'))
+                    except Exception as e:
+                        logger.error(f"Lỗi gửi Telegram: {e}")
                 else:
                     logger.error(f"❌ Không tìm thấy user {rental.user_id} để hoàn tiền")
-                    
         except Exception as e:
             logger.error(f"Lỗi kiểm tra số hết hạn: {e}")
 
 # ===== THIẾT LẬP SCHEDULER =====
 def setup_scheduler():
-    """Thiết lập scheduler tự động kiểm tra số hết hạn"""
     scheduler = BackgroundScheduler()
     scheduler.start()
-    
-    # Chạy mỗi 5 phút
     scheduler.add_job(
         func=check_expired_rentals,
         trigger=IntervalTrigger(minutes=5),
@@ -122,25 +126,71 @@ def setup_scheduler():
         name='Kiểm tra số hết hạn và hoàn tiền',
         replace_existing=True
     )
-    
-    # Dừng scheduler khi tắt app
     atexit.register(lambda: scheduler.shutdown())
-    
     logger.info("⏰ Scheduler kiểm tra số hết hạn đã được khởi động (5 phút/lần)")
 
-# Gọi hàm setup_scheduler sau khi khởi tạo app
 setup_scheduler()
 
+# ===== API TEST NẠP TIỀN (CÓ THÔNG BÁO) =====
+@app.route('/test-deposit', methods=['POST'])
+def test_deposit():
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        amount = data.get('amount')
+        code = data.get('code')
+
+        with app.app_context():
+            user = User.query.filter_by(user_id=user_id).first()
+            if not user:
+                return {"error": "User not found"}, 404
+
+            old_balance = user.balance
+            user.balance += amount
+
+            transaction = Transaction(
+                user_id=user.id,
+                amount=amount,
+                type='deposit',
+                status='success',
+                transaction_code=code,
+                description=f"Test nạp {amount}đ",
+                created_at=datetime.now()
+            )
+            db.session.add(transaction)
+            db.session.commit()
+
+            logger.info(f"✅ TEST: ĐÃ CỘNG {amount}đ CHO USER {user_id}")
+
+            # Gửi thông báo Telegram
+            try:
+                bot = Bot(token=os.getenv('BOT_TOKEN'))
+                message = (
+                    f"💰 **NẠP TIỀN THÀNH CÔNG (TEST)!**\n\n"
+                    f"• **Số tiền:** `{amount:,}đ`\n"
+                    f"• **Mã GD:** `{code}`\n"
+                    f"• **Số dư cũ:** `{old_balance:,}đ`\n"
+                    f"• **Số dư mới:** `{user.balance:,}đ`\n"
+                    f"• **Thời gian:** `{datetime.now().strftime('%H:%M:%S %d/%m/%Y')}`"
+                )
+                asyncio.run(bot.send_message(chat_id=user_id, text=message, parse_mode='Markdown'))
+            except Exception as e:
+                logger.error(f"Lỗi gửi Telegram: {e}")
+
+            return {"success": True, "new_balance": user.balance}
+
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+# ===== BOT TELEGRAM =====
 def main():
-    """Khởi chạy bot Telegram"""
     token = os.getenv('BOT_TOKEN')
     if not token:
         logger.error("❌ KHÔNG TÌM THẤY BOT_TOKEN trong file .env!")
         return
-    
-    # Tạo application
+
     application = Application.builder().token(token).build()
-    
+
     # Command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("rent", rent_command))
@@ -149,7 +199,7 @@ def main():
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
-    
+
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(rent_service_callback, pattern="^rent_service_"))
     application.add_handler(CallbackQueryHandler(rent_network_callback, pattern="^rent_network_"))
@@ -161,19 +211,13 @@ def main():
     application.add_handler(CallbackQueryHandler(deposit_amount_callback, pattern="^deposit_amount_"))
     application.add_handler(CallbackQueryHandler(deposit_check_callback, pattern="^deposit_check_"))
     application.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
-    
-    # Log số lượng handlers
-    handler_count = len(application.handlers.get(0, []))
-    logger.info(f"✅ Đã đăng ký {handler_count} handlers")
-    
-    # Start bot
+
     logger.info("🚀 Bot đang khởi động...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     import threading
     
-    # Chạy Flask server trong thread riêng
     port = int(os.getenv('PORT', 8080))
     flask_thread = threading.Thread(
         target=lambda: app.run(
@@ -186,10 +230,9 @@ if __name__ == '__main__':
     )
     flask_thread.daemon = True
     flask_thread.start()
-    
+
     logger.info(f"🌐 Flask server đang chạy trên port {port}")
-    
-    # Chạy bot Telegram
+
     try:
         main()
     except KeyboardInterrupt:
@@ -197,39 +240,4 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"❌ Lỗi: {e}")
         import traceback
-    traceback.print_exc()
-def test_deposit():
-    try:
-        data = request.json
-        user_id = data.get('user_id')
-        amount = data.get('amount')
-        code = data.get('code')
-        
-        with app.app_context():
-            user = User.query.filter_by(user_id=user_id).first()
-            if not user:
-                return {"error": "User not found"}, 404
-            
-            old_balance = user.balance
-            user.balance += amount
-            
-            transaction = Transaction(
-                user_id=user.id,
-                amount=amount,
-                type='deposit',
-                status='success',
-                transaction_code=code,
-                description=f"Test n�p {amount}",
-                created_at=datetime.now()
-            )
-            db.session.add(transaction)
-            db.session.commit()
-            
-            logger.info(f"' TEST: � C�NG {amount} CHO USER {user_id}")
-            return {"success": True, "new_balance": user.balance}
-            
-    except Exception as e:
-        return {"error": str(e)}, 500
-
-
-
+        traceback.print_exc()

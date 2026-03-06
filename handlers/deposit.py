@@ -188,3 +188,23 @@ async def deposit_check_callback(update: Update, context: Context):
             text="❌ **LỖI XỬ LÝ**\n\nVui lòng thử lại sau.",
             parse_mode='Markdown'
         )
+async def notify_deposit_success(context: Context, user_id: int, amount: int, new_balance: int, transaction_code: str):
+    """Gửi thông báo khi nạp tiền thành công"""
+    try:
+        message = (
+            f"💰 **NẠP TIỀN THÀNH CÔNG!**\n\n"
+            f"• **Số tiền:** `{amount:,}đ`\n"
+            f"• **Mã GD:** `{transaction_code}`\n"
+            f"• **Số dư mới:** `{new_balance:,}đ`\n"
+            f"• **Thời gian:** `{datetime.now().strftime('%H:%M:%S %d/%m/%Y')}`\n\n"
+            f"✅ Cảm ơn bạn đã sử dụng dịch vụ!"
+        )
+        
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=message,
+            parse_mode='Markdown'
+        )
+        logger.info(f"✅ Đã gửi thông báo nạp tiền cho user {user_id}")
+    except Exception as e:
+        logger.error(f"❌ Lỗi gửi thông báo: {e}")
