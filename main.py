@@ -197,7 +197,7 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"❌ Lỗi: {e}")
         import traceback
-        traceback.print_exc()app.route('/test-deposit', methods=['POST'])
+    traceback.print_exc()
 def test_deposit():
     try:
         data = request.json
