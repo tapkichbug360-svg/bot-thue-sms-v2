@@ -144,7 +144,7 @@ def test_deposit():
         with app.app_context():
             user = User.query.filter_by(user_id=user_id).first()
             if not user:
-                return {"error": "User not found"}, 404
+                return jsonify({"error": "User not found"}), 404
 
             old_balance = user.balance
             user.balance += amount
@@ -171,17 +171,89 @@ def test_deposit():
                     f"• **Số tiền:** `{amount:,}đ`\n"
                     f"• **Mã GD:** `{code}`\n"
                     f"• **Số dư cũ:** `{old_balance:,}đ`\n"
-                    f"• **Số dư mới:** `{user.balance:,}đ`\n"
-                    f"• **Thời gian:** `{datetime.now().strftime('%H:%M:%S %d/%m/%Y')}`"
+                    f"• **Số dư mới:** `{user.balance:,}đ`"
                 )
                 asyncio.run(bot.send_message(chat_id=user_id, text=message, parse_mode='Markdown'))
             except Exception as e:
                 logger.error(f"Lỗi gửi Telegram: {e}")
 
-            return {"success": True, "new_balance": user.balance}
+            return jsonify({"success": True, "new_balance": user.balance})
 
     except Exception as e:
-        return {"error": str(e)}, 500
+        return jsonify({"error": str(e)}), 500
+
+# ===== API ĐỒNG BỘ GIAO DỊCH =====
+@app.route('/sync-transactions', methods=['POST'])
+def sync_transactions():
+    """Đồng bộ giao dịch từ local lên Render"""
+    try:
+        data = request.json
+        transactions = data.get('transactions', [])
+        
+        with app.app_context():
+            synced = 0
+            existing = 0
+            
+            for t in transactions:
+                # Kiểm tra đã tồn tại chưa
+                existing_trans = Transaction.query.filter_by(transaction_code=t['code']).first()
+                if not existing_trans:
+                    user = User.query.filter_by(user_id=t['user_id']).first()
+                    if user:
+                        new_trans = Transaction(
+                            user_id=user.id,
+                            amount=t['amount'],
+                            type='deposit',
+                            status='pending',
+                            transaction_code=t['code'],
+                            description=f"Synced from local: {t['code']}",
+                            created_at=datetime.now()
+                        )
+                        db.session.add(new_trans)
+                        synced += 1
+                        logger.info(f"✅ Đã đồng bộ giao dịch {t['code']}")
+                    else:
+                        logger.warning(f"⚠️ Không tìm thấy user {t['user_id']} cho giao dịch {t['code']}")
+                else:
+                    existing += 1
+                    logger.info(f"⏭️ Giao dịch {t['code']} đã tồn tại")
+            
+            db.session.commit()
+            logger.info(f"✅ Đồng bộ hoàn tất: {synced} mới, {existing} đã tồn tại")
+            
+            return jsonify({
+                "success": True, 
+                "synced": synced,
+                "existing": existing,
+                "total": len(transactions)
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"❌ Lỗi đồng bộ: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ===== API KIỂM TRA GIAO DỊCH =====
+@app.route('/check-transaction', methods=['POST'])
+def check_transaction():
+    """Kiểm tra giao dịch có tồn tại không"""
+    try:
+        data = request.json
+        code = data.get('code')
+        
+        with app.app_context():
+            transaction = Transaction.query.filter_by(transaction_code=code).first()
+            if transaction:
+                user = User.query.get(transaction.user_id)
+                return jsonify({
+                    "exists": True,
+                    "status": transaction.status,
+                    "amount": transaction.amount,
+                    "user_id": user.user_id if user else None
+                }), 200
+            return jsonify({"exists": False}), 404
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ===== PHẦN NÀY CHỈ CHẠY KHI FILE ĐƯỢC CHẠY TRỰC TIẾP =====
 if __name__ == '__main__':
