@@ -1,52 +1,91 @@
-﻿from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import CallbackContext as Context
-from database.models import User
+﻿import sqlite3
+import requests
+from datetime import datetime
 
-async def balance_command(update: Update, context: Context):
-    user = update.effective_user
+def fix_user_balance(user_id):
+    """Đồng bộ và sửa số dư user"""
     
-    from main import app
-    with app.app_context():
-        db_user = User.query.filter_by(user_id=user.id).first()
-        if db_user:
-            balance = db_user.balance
-            total_rentals = db_user.total_rentals
-            total_spent = db_user.total_spent
-        else:
-            balance = 0
-            total_rentals = 0
-            total_spent = 0
+    print(f"🔍 Đang lấy dữ liệu user {user_id} từ Render...")
+    response = requests.post(
+        "https://bot-thue-sms-v2.onrender.com/api/force-sync-user",
+        json={'user_id': user_id}
+    )
     
-    if update.callback_query:
-        query = update.callback_query
-        keyboard = [
-            [InlineKeyboardButton("📥 Nạp tiền", callback_data='menu_deposit')],
-            [InlineKeyboardButton("📱 Thuê số", callback_data='menu_rent')],
-            [InlineKeyboardButton("🔙 Quay lại", callback_data='menu_main')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        msg = f"""💰 **SỐ DƯ TÀI KHOẢN**
-
-• **Số dư:** {balance:,}đ
-• **Đã thuê:** {total_rentals} số
-• **Tổng chi:** {total_spent:,}đ
-
-🆔 ID: {user.id}
-📝 Username: @{user.username or 'Không có'}"""
-        await query.edit_message_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
+    if response.status_code != 200:
+        print(f"❌ Không thể lấy dữ liệu từ Render")
+        return
+    
+    data = response.json()
+    render_balance = data['balance']
+    render_transactions = data['transactions']
+    
+    print(f"📊 Render: Balance = {render_balance:,}đ, {len(render_transactions)} transactions")
+    
+    conn = sqlite3.connect('database/bot.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id, balance FROM users WHERE user_id = ?", (user_id,))
+    local_user = cursor.fetchone()
+    
+    if not local_user:
+        print(f"❌ User {user_id} không tồn tại trong local")
+        conn.close()
+        return
+    
+    local_balance = local_user[1]
+    print(f"📊 Local: Balance = {local_balance:,}đ")
+    
+    cursor.execute("""
+        SELECT SUM(amount) FROM transactions 
+        WHERE user_id = ? AND status = 'success'
+    """, (local_user[0],))
+    total_success = cursor.fetchone()[0] or 0
+    
+    print(f"📊 Tổng success trong local: {total_success:,}đ")
+    
+    print("\n" + "="*50)
+    print("LỰA CHỌN:")
+    print("1. Cập nhật local theo Render")
+    print("2. Giữ local hiện tại")
+    print("3. Tính toán lại từ đầu (dùng tổng success)")
+    
+    choice = input("Chọn (1/2/3): ").strip()
+    
+    if choice == "1":
+        cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (render_balance, user_id))
+        conn.commit()
+        print(f"✅ Đã cập nhật local balance = {render_balance:,}đ")
+    elif choice == "3":
+        cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (total_success, user_id))
+        conn.commit()
+        print(f"✅ Đã cập nhật local balance = {total_success:,}đ")
     else:
-        keyboard = [
-            [InlineKeyboardButton("📥 Nạp tiền", callback_data='menu_deposit')],
-            [InlineKeyboardButton("📱 Thuê số", callback_data='menu_rent')],
-            [InlineKeyboardButton("🔙 Quay lại", callback_data='menu_main')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        msg = f"""💰 **SỐ DƯ TÀI KHOẢN**
+        print("✅ Giữ nguyên")
+    
+    conn.close()
 
-• **Số dư:** {balance:,}đ
-• **Đã thuê:** {total_rentals} số
-• **Tổng chi:** {total_spent:,}đ
+def list_all_users():
+    """Liệt kê tất cả users"""
+    conn = sqlite3.connect('database/bot.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT user_id, username, balance FROM users ORDER BY balance DESC")
+    users = cursor.fetchall()
+    
+    print("\n📋 DANH SÁCH USERS:")
+    print("="*60)
+    for uid, uname, bal in users:
+        print(f"  {uid}: @{uname} - {bal:,}đ")
+    
+    conn.close()
 
-🆔 ID: {user.id}
-📝 Username: @{user.username or 'Không có'}"""
-        await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
+if __name__ == "__main__":
+    print("="*60)
+    print("🛠️  CÔNG CỤ SỬA SỐ DƯ")
+    print("="*60)
+    
+    list_all_users()
+    
+    user_id = input("\nNhập user_id cần fix (Enter để thoát): ").strip()
+    if user_id:
+        fix_user_balance(int(user_id))

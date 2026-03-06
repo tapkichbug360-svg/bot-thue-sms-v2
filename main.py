@@ -83,19 +83,15 @@ last_check_time = datetime.now() - timedelta(minutes=1)
 processed_transactions = set()
 user_cache = {}
 
-# ===== HÀM KIỂM TRA USER TỰ ĐỘNG =====
 def get_or_create_user(user_id, username=None):
     """Lấy user từ cache/db, tự động tạo nếu chưa có"""
     global user_cache
     
-    # Kiểm tra cache
     if user_id in user_cache:
         return user_cache[user_id]
     
-    # Tìm trong database
     user = User.query.filter_by(user_id=user_id).first()
     if not user:
-        # Tạo user mới
         user = User(
             user_id=user_id,
             username=username or f"user_{user_id}",
@@ -107,7 +103,6 @@ def get_or_create_user(user_id, username=None):
         db.session.commit()
         logger.info(f"🆕 ĐÃ TẠO USER MỚI: {user_id} - {user.username}")
     
-    # Lưu vào cache
     user_cache[user_id] = user
     return user
 
@@ -133,7 +128,6 @@ def check_expired_rentals():
 
                     logger.info(f"💰 TỰ ĐỘNG HOÀN {refund}đ CHO USER {user.user_id}")
                     
-                    # Gửi thông báo Telegram
                     try:
                         bot = Bot(token=os.getenv('BOT_TOKEN'))
                         message = (
@@ -149,10 +143,16 @@ def check_expired_rentals():
         except Exception as e:
             logger.error(f"Lỗi kiểm tra số hết hạn: {e}")
 
+async def send_telegram_message(chat_id, message):
+    try:
+        bot = Bot(token=os.getenv('BOT_TOKEN'))
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
+    except Exception as e:
+        logger.error(f"Lỗi gửi Telegram: {e}")
+
 # ===== API 1: KIỂM TRA GIAO DỊCH =====
 @app.route('/api/check-transaction', methods=['POST'])
 def api_check_transaction():
-    """Kiểm tra thông tin giao dịch"""
     try:
         data = request.json
         code = data.get('code')
@@ -180,7 +180,6 @@ def api_check_transaction():
 # ===== API 2: ĐỒNG BỘ PENDING TỪ LOCAL =====
 @app.route('/api/sync-pending', methods=['POST'])
 def api_sync_pending():
-    """Đồng bộ danh sách giao dịch pending từ local"""
     try:
         data = request.json
         transactions = data.get('transactions', [])
@@ -191,10 +190,8 @@ def api_sync_pending():
             new_users = 0
             
             for t in transactions:
-                # Tự động tạo user nếu chưa có
-                user = get_or_create_user(t['user_id'])
+                user = get_or_create_user(t['user_id'], t.get('username'))
                 
-                # Kiểm tra giao dịch đã tồn tại chưa
                 existing = Transaction.query.filter_by(transaction_code=t['code']).first()
                 if not existing:
                     new_trans = Transaction(
@@ -213,7 +210,6 @@ def api_sync_pending():
                     skipped += 1
             
             db.session.commit()
-            logger.info(f"📊 Đồng bộ: {synced} mới, {skipped} cũ, {new_users} user mới")
             
             return jsonify({
                 "success": True,
@@ -230,7 +226,6 @@ def api_sync_pending():
 # ===== API 3: LẤY DANH SÁCH PENDING TRÊN RENDER =====
 @app.route('/api/get-pending', methods=['GET'])
 def api_get_pending():
-    """Lấy danh sách giao dịch pending trên Render"""
     try:
         with app.app_context():
             pending = Transaction.query.filter_by(status='pending').all()
@@ -257,7 +252,6 @@ def api_get_pending():
 # ===== API 4: KIỂM TRA USER =====
 @app.route('/api/check-user', methods=['POST'])
 def api_check_user():
-    """Kiểm tra thông tin user, tự động tạo nếu chưa có"""
     try:
         data = request.json
         user_id = data.get('user_id')
@@ -281,7 +275,6 @@ def api_check_user():
 # ===== API 5: LẤY TẤT CẢ GIAO DỊCH CỦA USER =====
 @app.route('/api/user-transactions', methods=['POST'])
 def api_user_transactions():
-    """Lấy lịch sử giao dịch của user"""
     try:
         data = request.json
         user_id = data.get('user_id')
@@ -324,7 +317,6 @@ def api_user_transactions():
 # ===== API 6: CẬP NHẬT USER =====
 @app.route('/api/update-user', methods=['POST'])
 def api_update_user():
-    """Cập nhật thông tin user"""
     try:
         data = request.json
         user_id = data.get('user_id')
@@ -351,7 +343,6 @@ def api_update_user():
 # ===== API 7: THỐNG KÊ HỆ THỐNG =====
 @app.route('/api/stats', methods=['GET'])
 def api_stats():
-    """Thống kê tổng quan hệ thống"""
     try:
         with app.app_context():
             total_users = User.query.count()
@@ -379,7 +370,6 @@ def api_stats():
 # ===== API 8: FORCE XỬ LÝ GIAO DỊCH =====
 @app.route('/api/process-transaction', methods=['POST'])
 def api_process_transaction():
-    """Force xử lý giao dịch (dùng khi webhook lỗi)"""
     try:
         data = request.json
         code = data.get('code')
@@ -391,7 +381,6 @@ def api_process_transaction():
             transaction = Transaction.query.filter_by(transaction_code=code).first()
             
             if not transaction:
-                # Tạo giao dịch mới
                 transaction = Transaction(
                     user_id=user.id,
                     amount=amount,
@@ -404,11 +393,9 @@ def api_process_transaction():
                 )
                 db.session.add(transaction)
             else:
-                # Cập nhật giao dịch cũ
                 transaction.status = 'success'
                 transaction.updated_at = datetime.now()
             
-            # Cộng tiền
             old_balance = user.balance
             user.balance += amount
             db.session.commit()
@@ -429,7 +416,6 @@ def api_process_transaction():
 # ===== API 9: RESET CACHE =====
 @app.route('/api/reset-cache', methods=['POST'])
 def api_reset_cache():
-    """Reset cache user (dùng khi debug)"""
     global user_cache
     try:
         user_cache = {}
@@ -438,14 +424,105 @@ def api_reset_cache():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+# ===== API 10: ĐỒNG BỘ 2 CHIỀU =====
+@app.route('/api/sync-bidirectional', methods=['POST'])
+def api_sync_bidirectional():
+    try:
+        data = request.json
+        local_transactions = data.get('local_transactions', [])
+        
+        with app.app_context():
+            render_pending = Transaction.query.filter_by(status='pending').all()
+            render_codes = {t.transaction_code for t in render_pending}
+            
+            local_codes = set()
+            synced_from_local = 0
+            
+            for lt in local_transactions:
+                local_codes.add(lt['code'])
+                existing = Transaction.query.filter_by(transaction_code=lt['code']).first()
+                if not existing:
+                    user = get_or_create_user(lt['user_id'], lt.get('username'))
+                    new_trans = Transaction(
+                        user_id=user.id,
+                        amount=lt['amount'],
+                        type='deposit',
+                        status='pending',
+                        transaction_code=lt['code'],
+                        description=f"Bidirectional sync: {lt['code']}",
+                        created_at=datetime.now()
+                    )
+                    db.session.add(new_trans)
+                    synced_from_local += 1
+                    logger.info(f"✅ Đồng bộ từ local: {lt['code']}")
+            
+            sync_to_local = []
+            for trans in render_pending:
+                if trans.transaction_code not in local_codes:
+                    user = User.query.get(trans.user_id)
+                    if user:
+                        sync_to_local.append({
+                            "code": trans.transaction_code,
+                            "amount": trans.amount,
+                            "user_id": user.user_id,
+                            "status": trans.status,
+                            "created_at": trans.created_at.isoformat() if trans.created_at else None
+                        })
+            
+            db.session.commit()
+            
+            return jsonify({
+                "success": True,
+                "synced_from_local": synced_from_local,
+                "sync_to_local": sync_to_local,
+                "render_pending_count": len(render_pending)
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"❌ Lỗi sync bidirectional: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+# ===== API 11: FORCE ĐỒNG BỘ USER =====
+@app.route('/api/force-sync-user', methods=['POST'])
+def api_force_sync_user():
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        
+        with app.app_context():
+            user = User.query.filter_by(user_id=user_id).first()
+            if not user:
+                return jsonify({"success": False, "error": "User not found"}), 404
+            
+            transactions = Transaction.query.filter_by(user_id=user.id).order_by(Transaction.created_at.desc()).all()
+            
+            result = []
+            for trans in transactions:
+                result.append({
+                    "code": trans.transaction_code,
+                    "amount": trans.amount,
+                    "status": trans.status,
+                    "created_at": trans.created_at.isoformat() if trans.created_at else None,
+                    "updated_at": trans.updated_at.isoformat() if trans.updated_at else None
+                })
+            
+            return jsonify({
+                "success": True,
+                "user_id": user.user_id,
+                "username": user.username,
+                "balance": user.balance,
+                "transactions": result
+            }), 200
+            
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 # ===== HÀM TỰ ĐỘNG KIỂM TRA GIAO DỊCH MỚI =====
 def auto_check_new_transactions():
-    """Tự động kiểm tra giao dịch thành công mới mỗi 10 giây"""
     global last_check_time, processed_transactions
     
     with app.app_context():
         try:
-            # Tìm giao dịch success từ sau lần check trước
             new_transactions = Transaction.query.filter(
                 Transaction.status == 'success',
                 Transaction.updated_at > last_check_time
@@ -460,7 +537,6 @@ def auto_check_new_transactions():
                         
                     user = User.query.get(trans.user_id)
                     if user:
-                        # Gửi thông báo Telegram
                         try:
                             bot = Bot(token=os.getenv('BOT_TOKEN'))
                             message = (
@@ -476,7 +552,6 @@ def auto_check_new_transactions():
                         except Exception as e:
                             logger.error(f"❌ Lỗi gửi Telegram: {e}")
                 
-                # Giới hạn kích thước cache
                 if len(processed_transactions) > 1000:
                     processed_transactions = set(list(processed_transactions)[-500:])
             
@@ -485,19 +560,10 @@ def auto_check_new_transactions():
         except Exception as e:
             logger.error(f"Lỗi auto check: {e}")
 
-async def send_telegram_message(chat_id, message):
-    """Gửi tin nhắn Telegram bất đồng bộ"""
-    try:
-        bot = Bot(token=os.getenv('BOT_TOKEN'))
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-    except Exception as e:
-        logger.error(f"Lỗi gửi Telegram: {e}")
-
 # ===== THIẾT LẬP SCHEDULER =====
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-# Job kiểm tra số hết hạn (5 phút)
 scheduler.add_job(
     func=check_expired_rentals,
     trigger=IntervalTrigger(minutes=5),
@@ -506,7 +572,6 @@ scheduler.add_job(
     replace_existing=True
 )
 
-# Job tự động kiểm tra giao dịch mới (10 giây)
 scheduler.add_job(
     func=auto_check_new_transactions,
     trigger=IntervalTrigger(seconds=10),
@@ -515,32 +580,31 @@ scheduler.add_job(
     replace_existing=True
 )
 
-# Dừng scheduler khi tắt app
 atexit.register(lambda: scheduler.shutdown())
 
 logger.info("="*60)
-logger.info("🚀 HỆ THỐNG ĐÃ KHỞI ĐỘNG VỚI CÁC API:")
-logger.info("  📌 POST /api/check-transaction - Kiểm tra giao dịch")
-logger.info("  📌 POST /api/sync-pending - Đồng bộ pending từ local")
-logger.info("  📌 GET  /api/get-pending - Lấy pending trên Render")
-logger.info("  📌 POST /api/check-user - Kiểm tra/tạo user")
-logger.info("  📌 POST /api/user-transactions - Lịch sử giao dịch user")
-logger.info("  📌 POST /api/update-user - Cập nhật user")
-logger.info("  📌 GET  /api/stats - Thống kê hệ thống")
-logger.info("  📌 POST /api/process-transaction - Force xử lý giao dịch")
-logger.info("  📌 POST /api/reset-cache - Reset cache")
+logger.info("🚀 HỆ THỐNG ĐÃ KHỞI ĐỘNG VỚI 11 API:")
+logger.info("  1. POST /api/check-transaction - Kiểm tra giao dịch")
+logger.info("  2. POST /api/sync-pending - Đồng bộ pending từ local")
+logger.info("  3. GET  /api/get-pending - Lấy pending trên Render")
+logger.info("  4. POST /api/check-user - Kiểm tra/tạo user")
+logger.info("  5. POST /api/user-transactions - Lịch sử giao dịch user")
+logger.info("  6. POST /api/update-user - Cập nhật user")
+logger.info("  7. GET  /api/stats - Thống kê hệ thống")
+logger.info("  8. POST /api/process-transaction - Force xử lý giao dịch")
+logger.info("  9. POST /api/reset-cache - Reset cache")
+logger.info(" 10. POST /api/sync-bidirectional - Đồng bộ 2 chiều")
+logger.info(" 11. POST /api/force-sync-user - Force đồng bộ user")
 logger.info("="*60)
 logger.info("⏱️  Auto check giao dịch mới: 10 giây/lần")
 logger.info("⏱️  Auto check số hết hạn: 5 phút/lần")
 logger.info("="*60)
 
-# ===== PHẦN CHẠY ỨNG DỤNG =====
 if __name__ == '__main__':
     import threading
     
     port = int(os.getenv('PORT', 8080))
     
-    # Chạy Flask server
     flask_thread = threading.Thread(
         target=lambda: app.run(
             host='0.0.0.0', 
@@ -557,7 +621,6 @@ if __name__ == '__main__':
     logger.info("🚫 Bot Telegram ĐÃ TẮT trên Render - Chỉ chạy local")
     logger.info("📱 Để chạy bot, gõ: python bot.py ở local")
 
-    # Giữ Flask chạy
     try:
         while True:
             time.sleep(60)
