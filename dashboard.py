@@ -872,25 +872,26 @@ def manual():
 
 @app.route('/add_money', methods=['POST'])
 def add_money():
-    """API cộng tiền thủ công - ĐÃ FIX LỖI CỘNG TIỀN"""
+    """API cộng tiền thủ công - ĐÃ FIX ĐẦY ĐỦ"""
     user_id = request.form.get('user_id', type=int)
     amount = request.form.get('amount', type=int)
     reason = request.form.get('reason', 'Cộng tiền thủ công')
     
     if not user_id or not amount or amount < 1000:
         flash('Vui lòng nhập đủ thông tin và số tiền phải >= 1000đ', 'danger')
-        return redirect(request.referrer or url_for('manual'))
+        return redirect(url_for('manual'))
     
     with app.app_context():
+        # Tìm user
         user = User.query.filter_by(user_id=user_id).first()
         if not user:
             flash(f'Không tìm thấy user có ID {user_id}', 'danger')
-            return redirect(request.referrer or url_for('manual'))
+            return redirect(url_for('manual'))
         
         # Lưu số dư cũ
         old_balance = user.balance
         
-        # CỘNG TIỀN - DÒNG QUAN TRỌNG NHẤT!
+        # CỘNG TIỀN - QUAN TRỌNG NHẤT!
         user.balance += amount
         
         # Tạo transaction code
@@ -910,25 +911,48 @@ def add_money():
         db.session.add(transaction)
         db.session.commit()
         
-        # Refresh để lấy số dư mới nhất
+        # REFRESH để lấy số dư mới nhất
         db.session.refresh(user)
         
-        # Đồng bộ lên Render
+        # ĐỒNG BỘ LÊN RENDER
         try:
-            import requests
             RENDER_URL = "https://bot-thue-sms-v2.onrender.com"
-            requests.post(f"{RENDER_URL}/api/check-user", json={'user_id': user.user_id, 'username': user.username}, timeout=3)
-            requests.post(f"{RENDER_URL}/api/sync-pending", json={'transactions': [{'code': transaction_code, 'amount': amount, 'user_id': user.user_id, 'username': user.username}]}, timeout=3)
-        except:
-            pass
+            
+            # Push user lên Render
+            user_response = requests.post(
+                f"{RENDER_URL}/api/check-user",
+                json={'user_id': user.user_id, 'username': user.username},
+                timeout=5
+            )
+            logger.info(f"✅ Push user lên Render: {user_response.status_code}")
+            
+            # Push transaction lên Render
+            trans_response = requests.post(
+                f"{RENDER_URL}/api/sync-pending",
+                json={'transactions': [{
+                    'code': transaction_code,
+                    'amount': amount,
+                    'user_id': user.user_id,
+                    'username': user.username
+                }]},
+                timeout=5
+            )
+            logger.info(f"✅ Push transaction lên Render: {trans_response.status_code}")
+            
+        except Exception as e:
+            logger.error(f"⚠️ Không thể push lên Render: {e}")
+            # Không ảnh hưởng đến giao dịch local
         
         logger.info(f"✅ ĐÃ CỘNG {amount}đ CHO USER {user_id}")
         logger.info(f"   Số dư: {old_balance}đ → {user.balance}đ")
+        logger.info(f"   Mã GD: {transaction_code}")
         
+        # FLASH MESSAGE VỚI SỐ DƯ MỚI
         flash(f'💰 NẠP TIỀN THÀNH CÔNG!\n'
               f'• Số tiền: {amount:,}đ\n'
               f'• Mã GD: {transaction_code}\n'
-              f'• Số dư mới: {user.balance:,}đ', 'success')
+              f'• Số dư mới: {user.balance:,}đ\n'
+              f'• Thời gian: {datetime.now().strftime("%H:%M:%S %d/%m/%Y")}', 'success')
     
     return redirect(url_for('manual'))
 

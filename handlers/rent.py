@@ -1009,7 +1009,8 @@ async def rent_cancel_callback(update: Update, context: Context):
             api_data = response.json()
             api_success = api_data.get('status') == 200
             
-            # Lấy số dư TRƯỚC khi hủy
+            # Lấy số dư TRƯỚC khi hủy - QUAN TRỌNG: dùng giá trị mới nhất từ DB
+            db.session.refresh(user)  # Refresh để lấy số dư mới nhất
             before_cancel_balance = user.balance
             
             # Cập nhật trạng thái
@@ -1019,8 +1020,12 @@ async def rent_cancel_callback(update: Update, context: Context):
             # HOÀN LẠI ĐÚNG SỐ TIỀN
             user.balance += refund
             
+            # Refresh lại để lấy số dư sau khi cập nhật
+            db.session.refresh(user)
+            after_cancel_balance = user.balance
+            
             logger.info(f"💰 HOÀN {refund}đ CHO USER {user.user_id}")
-            logger.info(f"   Số dư trước hủy: {before_cancel_balance}đ → Sau hủy: {user.balance}đ (Hoàn: +{refund}đ)")
+            logger.info(f"   Số dư trước hủy: {before_cancel_balance}đ → Sau hủy: {after_cancel_balance}đ (Hoàn: +{refund}đ)")
             
             db.session.commit()
             
@@ -1039,7 +1044,7 @@ async def rent_cancel_callback(update: Update, context: Context):
                 f"📱 **Dịch vụ:** {service_name}\n"
                 f"💰 **Hoàn tiền:** {refund:,}đ\n"
                 f"💵 **Số dư trước hủy:** {before_cancel_balance:,}đ\n"
-                f"💵 **Số dư sau hủy:** {user.balance:,}đ\n\n"
+                f"💵 **Số dư sau hủy:** {after_cancel_balance:,}đ\n\n"
                 f"✅ Đã hoàn tiền vào tài khoản của bạn!",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
