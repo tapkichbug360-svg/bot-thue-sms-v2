@@ -98,7 +98,7 @@ def sync_bidirectional():
         print(f"❌ Lỗi đồng bộ: {e}")
 
 def force_sync_user(user_id):
-    """Force đồng bộ tất cả giao dịch của một user"""
+    """Force đồng bộ tất cả giao dịch của một user - CÓ CẬP NHẬT LOCAL"""
     try:
         response = requests.post(
             f"{RENDER_URL}/api/force-sync-user",
@@ -108,8 +108,34 @@ def force_sync_user(user_id):
         
         if response.status_code == 200:
             data = response.json()
+            render_balance = data['balance']
+            
+            # CẬP NHẬT LOCAL
+            db_path = os.path.join('database', 'bot.db')
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Lấy số dư cũ
+            cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
+            old = cursor.fetchone()
+            old_balance = old[0] if old else 0
+            
+            # Cập nhật số dư mới
+            cursor.execute('UPDATE users SET balance = ? WHERE user_id = ?', (render_balance, user_id))
+            
+            # Cập nhật trạng thái giao dịch
+            for trans in data['transactions']:
+                cursor.execute("""
+                    UPDATE transactions 
+                    SET status = ?, updated_at = ? 
+                    WHERE transaction_code = ?
+                """, (trans['status'], datetime.now(), trans['code']))
+            
+            conn.commit()
+            conn.close()
+            
             print(f"✅ User {data['user_id']} - {data['username']}")
-            print(f"💰 Balance: {data['balance']:,}đ")
+            print(f"💰 Balance: {old_balance}đ → {render_balance}đ")
             print(f"📊 Transactions: {len(data['transactions'])}")
             return data
         else:

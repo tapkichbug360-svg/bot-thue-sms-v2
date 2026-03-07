@@ -6,12 +6,15 @@ import logging
 import random
 import string
 import os
+import asyncio
+import requests
 
 logger = logging.getLogger(__name__)
 
 MB_ACCOUNT = os.getenv('MB_ACCOUNT', '666666291005')
 MB_NAME = os.getenv('MB_NAME', 'NGUYEN THE LAM')
 MB_BIN = os.getenv('MB_BIN', '970422')
+RENDER_URL = os.getenv('RENDER_URL', 'https://bot-thue-sms-v2.onrender.com')
 
 async def deposit_command(update: Update, context: Context):
     """Hiển thị menu nạp tiền"""
@@ -32,7 +35,7 @@ async def deposit_command(update: Update, context: Context):
     
     text = f"""🏦 **NẠP TIỀN QUA MBBANK**
 
-💳 **Số TK:** {MB_ACCOUNT}
+💳 **Số TK:** `{MB_ACCOUNT}`
 👤 **Chủ TK:** {MB_NAME}
 🏦 **Ngân hàng:** MBBank
 
@@ -65,7 +68,7 @@ async def deposit_amount_callback(update: Update, context: Context):
             )
             return
         
-        # Lưu giao dịch vào database
+        # Lưu giao dịch vào database local
         from main import app
         with app.app_context():
             user = update.effective_user
@@ -83,7 +86,7 @@ async def deposit_amount_callback(update: Update, context: Context):
                 db.session.commit()
                 logger.info(f"✅ Đã tạo user mới: {user.id}")
             
-            # Tạo transaction
+            # Tạo transaction pending
             transaction = Transaction(
                 user_id=db_user.id,
                 amount=amount,
@@ -100,7 +103,9 @@ async def deposit_amount_callback(update: Update, context: Context):
         
         # Tạo QR code
         content = f"NAP {transaction_code}"
-        qr_url = f"https://img.vietqr.io/image/{MB_BIN}-{MB_ACCOUNT}-compact2.png?amount={amount}&addInfo={content}&accountName={MB_NAME}"
+        import urllib.parse
+        encoded_content = urllib.parse.quote(content)
+        qr_url = f"https://img.vietqr.io/image/{MB_BIN}-{MB_ACCOUNT}-compact2.jpg?amount={amount}&addInfo={encoded_content}&accountName={MB_NAME}"
         
         keyboard = [
             [InlineKeyboardButton("✅ TÔI ĐÃ CHUYỂN KHOẢN", callback_data=f"deposit_check_{transaction_code}")],
@@ -115,10 +120,10 @@ async def deposit_amount_callback(update: Update, context: Context):
             photo=qr_url,
             caption=f"""🏦 **THÔNG TIN CHUYỂN KHOẢN**
 
-💳 **STK:** {MB_ACCOUNT}
+💳 **STK:** `{MB_ACCOUNT}`
 👤 **Chủ TK:** {MB_NAME}
 💰 **Số tiền:** {amount:,}đ
-📝 **Nội dung:** {content}
+📝 **Nội dung:** `{content}`
 
 ✅ **Bấm nút 'TÔI ĐÃ CHUYỂN KHOẢN' sau khi chuyển!""",
             parse_mode='Markdown',
@@ -135,7 +140,7 @@ async def deposit_amount_callback(update: Update, context: Context):
         )
 
 async def deposit_check_callback(update: Update, context: Context):
-    """Xử lý khi user bấm 'TÔI ĐÃ CHUYỂN KHOẢN'"""
+    """Xử lý khi user bấm 'TÔI ĐÃ CHUYỂN KHOẢN' - KHÔNG BÁO THÀNH CÔNG NGAY"""
     query = update.callback_query
     try:
         await query.answer()
@@ -156,24 +161,28 @@ async def deposit_check_callback(update: Update, context: Context):
             if not transaction:
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"❌ **KHÔNG TÌM THẤY GIAO DỊCH**\n\nMã GD: {transaction_code}",
+                    text=f"❌ **KHÔNG TÌM THẤY GIAO DỊCH**\n\nMã GD: {transaction_code}\nVui lòng thử lại hoặc liên hệ admin.",
                     parse_mode='Markdown'
                 )
                 return
             
+            # Cập nhật thời gian
             transaction.updated_at = datetime.now()
             db.session.commit()
             
-            text = f"""⏳ **ĐANG CHỜ XÁC NHẬN TỪ NGÂN HÀNG**
+            # GỬI THÔNG BÁO CHỜ XỬ LÝ - KHÔNG BÁO THÀNH CÔNG NGAY
+            text = f"""⏳ **ĐANG XỬ LÝ GIAO DỊCH**
 
 💰 **Số tiền:** {transaction.amount:,}đ
-📝 **Mã GD:** {transaction_code}
+📝 **Mã GD:** `{transaction_code}`
 
-✅ Đã ghi nhận yêu cầu nạp tiền của bạn.
-⏱️ Hệ thống sẽ **TỰ ĐỘNG CỘNG TIỀN** sau khi xác nhận giao dịch thành công từ ngân hàng.
+✅ **Đã ghi nhận yêu cầu nạp tiền của bạn.**
 
-⏰ **Thời gian xử lý:** 1-5 phút
-⚠️ **KHÔNG CẦN BẤM NÚT NHIỀU LẦN**"""
+⏱️ **Hệ thống đang chờ xác nhận từ ngân hàng.**
+💳 **Tiền sẽ được cộng tự động sau 1-5 phút.**
+
+⚠️ **KHÔNG CẦN BẤM NÚT NHIỀU LẦN**
+📱 **Bạn sẽ nhận thông báo khi giao dịch hoàn tất.**"""
             
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -188,23 +197,65 @@ async def deposit_check_callback(update: Update, context: Context):
             text="❌ **LỖI XỬ LÝ**\n\nVui lòng thử lại sau.",
             parse_mode='Markdown'
         )
-async def notify_deposit_success(context: Context, user_id: int, amount: int, new_balance: int, transaction_code: str):
-    """Gửi thông báo khi nạp tiền thành công"""
+
+async def check_deposit_status(update: Update, context: Context):
+    """Lệnh kiểm tra trạng thái giao dịch thủ công"""
     try:
-        message = (
-            f"💰 **NẠP TIỀN THÀNH CÔNG!**\n\n"
-            f"• **Số tiền:** `{amount:,}đ`\n"
-            f"• **Mã GD:** `{transaction_code}`\n"
-            f"• **Số dư mới:** `{new_balance:,}đ`\n"
-            f"• **Thời gian:** `{datetime.now().strftime('%H:%M:%S %d/%m/%Y')}`\n\n"
-            f"✅ Cảm ơn bạn đã sử dụng dịch vụ!"
-        )
+        # Lấy mã giao dịch từ user nhập
+        if not context.args:
+            await update.message.reply_text(
+                "❌ **CÚ PHÁP SAI**\n\nVui lòng nhập: `/check MÃ_GD`\nVí dụ: `/check UNOT6DOB`",
+                parse_mode='Markdown'
+            )
+            return
         
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=message,
+        code = context.args[0].upper()
+        
+        # Kiểm tra trên Render
+        try:
+            response = requests.post(
+                f"{RENDER_URL}/api/check-transaction",
+                json={'code': code},
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('exists'):
+                    status_text = {
+                        'pending': '⏳ Đang chờ xử lý',
+                        'success': '✅ Đã thành công',
+                        'failed': '❌ Thất bại'
+                    }.get(data['status'], '❓ Không xác định')
+                    
+                    await update.message.reply_text(
+                        f"🔍 **KIỂM TRA GIAO DỊCH {code}**\n\n"
+                        f"📊 **Trạng thái:** {status_text}\n"
+                        f"💰 **Số tiền:** {data['amount']:,}đ\n"
+                        f"👤 **User ID:** {data['user_id']}\n\n"
+                        f"{'✅ Giao dịch đã thành công!' if data['status'] == 'success' else '⏳ Vui lòng chờ xử lý...'}",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"❌ **KHÔNG TÌM THẤY**\n\nMã giao dịch `{code}` không tồn tại trong hệ thống.",
+                        parse_mode='Markdown'
+                    )
+            else:
+                await update.message.reply_text(
+                    f"❌ **LỖI KẾT NỐI**\n\nKhông thể kiểm tra trạng thái. Vui lòng thử lại sau.",
+                    parse_mode='Markdown'
+                )
+        except Exception as e:
+            logger.error(f"Lỗi check status: {e}")
+            await update.message.reply_text(
+                f"❌ **LỖI**\n\nKhông thể kết nối đến server.",
+                parse_mode='Markdown'
+            )
+            
+    except Exception as e:
+        logger.error(f"Lỗi check_deposit_status: {e}")
+        await update.message.reply_text(
+            "❌ **LỖI XỬ LÝ**\n\nVui lòng thử lại sau.",
             parse_mode='Markdown'
         )
-        logger.info(f"✅ Đã gửi thông báo nạp tiền cho user {user_id}")
-    except Exception as e:
-        logger.error(f"❌ Lỗi gửi thông báo: {e}")

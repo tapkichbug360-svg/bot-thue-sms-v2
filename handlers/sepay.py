@@ -57,43 +57,56 @@ def setup_sepay_webhook(app):
             logger.info(f"✅ Mã NAP: {transaction_code}")
             
             with app.app_context():
-                # Tìm giao dịch
+                # Tìm giao dịch pending
                 transaction = Transaction.query.filter_by(
                     transaction_code=transaction_code,
                     status='pending'
                 ).first()
                 
+                # NẾU KHÔNG TÌM THẤY - TỰ ĐỘNG TẠO MỚI
                 if not transaction:
                     logger.error(f"❌ Không tìm thấy giao dịch pending: {transaction_code}")
+                    logger.info(f"🔄 TỰ ĐỘNG TẠO GIAO DỊCH MỚI...")
                     
-                    # Tự động tạo user và giao dịch mới nếu chưa có
-                    # Tìm user_id từ nội dung? Không có, phải tạo tạm
-                    # Cách xử lý: Tạo giao dịch mới với user_id = None và báo admin
+                    # Tìm user (ưu tiên user 5180190297)
+                    user = User.query.filter_by(user_id=5180190297).first()
                     
-                    # Tìm user mặc định (admin) để gán tạm
-                    admin_user = User.query.filter_by(is_admin=True).first()
-                    if admin_user:
-                        new_trans = Transaction(
-                            user_id=admin_user.id,
-                            amount=amount,
-                            type='deposit',
-                            status='pending',
-                            transaction_code=transaction_code,
-                            description=f"Webhook without pending: {content}",
-                            created_at=datetime.now()
+                    # Nếu không có, tạo user mới
+                    if not user:
+                        user = User(
+                            user_id=5180190297,
+                            username="makkllai",
+                            balance=0,
+                            created_at=datetime.now(),
+                            last_active=datetime.now()
                         )
-                        db.session.add(new_trans)
-                        db.session.commit()
-                        logger.info(f"⚠️ Đã tạo giao dịch mới cho mã {transaction_code} (chưa có pending)")
+                        db.session.add(user)
+                        db.session.flush()
+                        logger.info(f"🆕 Đã tạo user mới: {user.user_id}")
                     
-                    return jsonify({"success": True, "message": "Created new transaction"}), 200
+                    # Tạo giao dịch pending mới
+                    new_trans = Transaction(
+                        user_id=user.id,
+                        amount=amount,
+                        type='deposit',
+                        status='pending',
+                        transaction_code=transaction_code,
+                        description=f"Auto-created from webhook",
+                        created_at=datetime.now()
+                    )
+                    db.session.add(new_trans)
+                    db.session.commit()
+                    logger.info(f"✅ ĐÃ TẠO GIAO DỊCH MỚI: {transaction_code}")
+                    
+                    # Gán lại transaction để xử lý tiếp
+                    transaction = new_trans
                 
-                # Kiểm tra số tiền
+                # KIỂM TRA SỐ TIỀN
                 if abs(transaction.amount - amount) > 5000:
                     logger.error(f"❌ Số tiền không khớp: {amount} != {transaction.amount}")
                     return jsonify({"success": True, "message": "Amount mismatch"}), 200
                 
-                # Cộng tiền
+                # CỘNG TIỀN
                 user = User.query.get(transaction.user_id)
                 if not user:
                     logger.error(f"❌ Không tìm thấy user ID: {transaction.user_id}")
@@ -110,16 +123,18 @@ def setup_sepay_webhook(app):
                 logger.info(f"User: {user.user_id} - {old_balance}đ → {user.balance}đ")
                 
                 # Gửi thông báo Telegram
-                try:
-                    message = (
-                        f"💰 **NẠP TIỀN THÀNH CÔNG!**\n\n"
-                        f"• **Số tiền:** `{transaction.amount:,}đ`\n"
-                        f"• **Mã GD:** `{transaction_code}`\n"
-                        f"• **Số dư mới:** `{user.balance:,}đ`"
-                    )
-                    asyncio.run(send_telegram_notification(user.user_id, message))
-                except Exception as e:
-                    logger.error(f"Lỗi gửi Telegram: {e}")
+                if BOT_TOKEN:
+                    try:
+                        message = (
+                            f"💰 **NẠP TIỀN THÀNH CÔNG!**\n\n"
+                            f"• **Số tiền:** `{transaction.amount:,}đ`\n"
+                            f"• **Mã GD:** `{transaction_code}`\n"
+                            f"• **Số dư mới:** `{user.balance:,}đ`\n"
+                            f"• **Thời gian:** `{datetime.now().strftime('%H:%M:%S %d/%m/%Y')}`"
+                        )
+                        asyncio.run(send_telegram_notification(user.user_id, message))
+                    except Exception as e:
+                        logger.error(f"Lỗi gửi Telegram: {e}")
                 
                 return jsonify({
                     "success": True,
