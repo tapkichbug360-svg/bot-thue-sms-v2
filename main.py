@@ -34,11 +34,11 @@ db_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database')
 if not os.path.exists(db_dir):
     os.makedirs(db_dir)
 
-# ===== ĐỌC FILE .ENV - CHUẨN CHO CẢ LOCAL VÀ RENDER =====
+# ===== ĐỌC FILE .ENV - FIX LỖI FALSE =====
 print("🔧 KIỂM TRA CẤU HÌNH MÔI TRƯỜNG...")
 print("="*50)
 
-# Nếu có file .env (chạy local)
+# Thử đọc file .env nếu có (khi chạy local)
 if os.path.exists(".env"):
     try:
         with open(".env", "r", encoding="utf-8") as f:
@@ -56,14 +56,14 @@ else:
     # Chạy trên Render - lấy từ Environment Variables
     print("☁️ Không tìm thấy file .env, dùng biến môi trường Render")
 
-# Kiểm tra các biến bắt buộc
-required_vars = ['BOT_TOKEN', 'MB_ACCOUNT', 'MB_NAME', 'MB_BIN']
+# Kiểm tra các biến bắt buộc (CHỈ CẢNH BÁO, KHÔNG EXIT)
+required_vars = ['BOT_TOKEN', 'MB_ACCOUNT', 'MB_NAME', 'MB_BIN', 'SEPAY_TOKEN']
 missing_vars = [var for var in required_vars if not os.getenv(var)]
 
 if missing_vars:
     print(f"⚠️ THIẾU BIẾN MÔI TRƯỜNG: {missing_vars}")
     print("⚠️ Bot sẽ chạy nhưng một số chức năng có thể không hoạt động")
-    # KHÔNG exit(1) - chỉ cảnh báo để Render không crash
+    print("⚠️ Vui lòng thêm các biến này trên Render Dashboard")
 else:
     print("✅ Tất cả biến môi trường đã sẵn sàng")
 
@@ -149,22 +149,25 @@ def check_expired_rentals():
 
                     logger.info(f"💰 TỰ ĐỘNG HOÀN {refund}đ CHO USER {user.user_id}")
                     
-                    try:
-                        bot = Bot(token=os.getenv('BOT_TOKEN'))
-                        message = (
-                            f"⏰ **SỐ HẾT HẠN & HOÀN TIỀN**\n\n"
-                            f"• **Số:** {rental.phone_number}\n"
-                            f"• **Dịch vụ:** {rental.service_name}\n"
-                            f"• **Tiền hoàn:** {refund:,}đ\n"
-                            f"• **Số dư mới:** {user.balance:,}đ"
-                        )
-                        asyncio.run(send_telegram_message(user.user_id, message))
-                    except Exception as e:
-                        logger.error(f"Lỗi gửi Telegram: {e}")
+                    if os.getenv('BOT_TOKEN'):
+                        try:
+                            bot = Bot(token=os.getenv('BOT_TOKEN'))
+                            message = (
+                                f"⏰ **SỐ HẾT HẠN & HOÀN TIỀN**\n\n"
+                                f"• **Số:** `{rental.phone_number}`\n"
+                                f"• **Dịch vụ:** {rental.service_name}\n"
+                                f"• **Tiền hoàn:** `{refund:,}đ`\n"
+                                f"• **Số dư mới:** `{user.balance:,}đ`"
+                            )
+                            asyncio.run(send_telegram_message(user.user_id, message))
+                        except Exception as e:
+                            logger.error(f"Lỗi gửi Telegram: {e}")
         except Exception as e:
             logger.error(f"Lỗi kiểm tra số hết hạn: {e}")
 
 async def send_telegram_message(chat_id, message):
+    if not os.getenv('BOT_TOKEN'):
+        return
     try:
         bot = Bot(token=os.getenv('BOT_TOKEN'))
         await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
@@ -557,15 +560,15 @@ def auto_check_new_transactions():
                         continue
                         
                     user = User.query.get(trans.user_id)
-                    if user:
+                    if user and os.getenv('BOT_TOKEN'):
                         try:
                             bot = Bot(token=os.getenv('BOT_TOKEN'))
                             message = (
                                 f"💰 **NẠP TIỀN THÀNH CÔNG!**\n\n"
-                                f"• **Số tiền:** {trans.amount:,}đ\n"
-                                f"• **Mã GD:** {trans.transaction_code}\n"
-                                f"• **Số dư mới:** {user.balance:,}đ\n"
-                                f"• **Thời gian:** {trans.updated_at.strftime('%H:%M:%S %d/%m/%Y')}"
+                                f"• **Số tiền:** `{trans.amount:,}đ`\n"
+                                f"• **Mã GD:** `{trans.transaction_code}`\n"
+                                f"• **Số dư mới:** `{user.balance:,}đ`\n"
+                                f"• **Thời gian:** `{trans.updated_at.strftime('%H:%M:%S %d/%m/%Y')}`"
                             )
                             asyncio.run(send_telegram_message(user.user_id, message))
                             processed_transactions.add(trans.id)
