@@ -870,7 +870,7 @@ def manual():
         now=datetime.now()
     )
 
-@dashboard_bp.route('/add_money', methods=['POST'])
+@app.route('/add_money', methods=['POST'])
 def add_money():
     """API cộng tiền thủ công - ĐÃ FIX LỖI CỘNG TIỀN"""
     user_id = request.form.get('user_id', type=int)
