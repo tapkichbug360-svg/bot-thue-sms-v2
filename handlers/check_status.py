@@ -1,4 +1,5 @@
 import sqlite3
+from bot import app
 
 print("🔍 KIỂM TRA TRẠNG THÁI HỆ THỐNG")
 print("="*50)

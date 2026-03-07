@@ -1,6 +1,9 @@
-﻿from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from bot import app
 from telegram.ext import CallbackContext as Context
+from bot import app
 from database.models import User, Transaction, db
+from bot import app
 from datetime import datetime
 import logging
 import random
@@ -9,6 +12,7 @@ import os
 import asyncio
 import requests
 import urllib.parse
+from bot import app
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +21,11 @@ MB_NAME = os.getenv('MB_NAME', 'NGUYEN THE LAM')
 MB_BIN = os.getenv('MB_BIN', '970422')
 RENDER_URL = os.getenv('RENDER_URL', 'https://bot-thue-sms-v2.onrender.com')
 
-# Cache để tránh push trùng
+# Cache d? tr�nh push tr�ng
 pushed_transactions = set()
 
 async def push_user_to_render(user_id, username):
-    """Đẩy user lên Render ngay lập tức"""
+    """�?y user l�n Render ngay l?p t?c"""
     try:
         response = requests.post(
             f"{RENDER_URL}/api/check-user",
@@ -29,22 +33,22 @@ async def push_user_to_render(user_id, username):
             timeout=5
         )
         if response.status_code == 200:
-            logger.info(f"✅ Đã push user {user_id} lên Render thành công")
+            logger.info(f"? �� push user {user_id} l�n Render th�nh c�ng")
             return True
         else:
-            logger.warning(f"⚠️ Push user {user_id} thất bại: {response.status_code}")
+            logger.warning(f"?? Push user {user_id} th?t b?i: {response.status_code}")
             return False
     except Exception as e:
-        logger.error(f"❌ Lỗi push user {user_id}: {e}")
+        logger.error(f"? L?i push user {user_id}: {e}")
         return False
 
 async def push_transaction_to_render(transaction_code, amount, user_id, username):
-    """Đẩy giao dịch lên Render ngay sau khi tạo"""
+    """�?y giao d?ch l�n Render ngay sau khi t?o"""
     global pushed_transactions
     
-    # Tránh push trùng
+    # Tr�nh push tr�ng
     if transaction_code in pushed_transactions:
-        logger.info(f"⏭️ Giao dịch {transaction_code} đã được push trước đó")
+        logger.info(f"?? Giao d?ch {transaction_code} d� du?c push tru?c d�")
         return True
     
     try:
@@ -63,31 +67,31 @@ async def push_transaction_to_render(transaction_code, amount, user_id, username
         
         if response.status_code == 200:
             result = response.json()
-            logger.info(f"✅ Đã đẩy giao dịch {transaction_code} lên Render thành công: {result}")
+            logger.info(f"? �� d?y giao d?ch {transaction_code} l�n Render th�nh c�ng: {result}")
             pushed_transactions.add(transaction_code)
             
-            # Giới hạn kích thước cache
+            # Gi?i h?n k�ch thu?c cache
             if len(pushed_transactions) > 100:
                 pushed_transactions.clear()
             
             return True
         else:
-            logger.warning(f"⚠️ Đẩy giao dịch {transaction_code} thất bại: {response.status_code}")
+            logger.warning(f"?? �?y giao d?ch {transaction_code} th?t b?i: {response.status_code}")
             try:
                 error_detail = response.json()
-                logger.error(f"📝 Chi tiết lỗi: {error_detail}")
+                logger.error(f"?? Chi ti?t l?i: {error_detail}")
             except:
                 pass
             return False
     except requests.exceptions.Timeout:
-        logger.error(f"❌ Timeout khi đẩy giao dịch {transaction_code}")
+        logger.error(f"? Timeout khi d?y giao d?ch {transaction_code}")
         return False
     except Exception as e:
-        logger.error(f"❌ Lỗi đẩy giao dịch {transaction_code}: {e}")
+        logger.error(f"? L?i d?y giao d?ch {transaction_code}: {e}")
         return False
 
 async def deposit_command(update: Update, context: Context):
-    """Hiển thị menu nạp tiền"""
+    """Hi?n th? menu n?p ti?n"""
     transaction_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
     context.user_data['pending_deposit'] = {'code': transaction_code, 'amount': None}
     
@@ -95,23 +99,23 @@ async def deposit_command(update: Update, context: Context):
     keyboard = []
     row = []
     for i, amount in enumerate(amounts):
-        btn = InlineKeyboardButton(f"{amount:,}đ", callback_data=f"deposit_amount_{amount}")
+        btn = InlineKeyboardButton(f"{amount:,}d", callback_data=f"deposit_amount_{amount}")
         row.append(btn)
         if len(row) == 2 or i == len(amounts)-1:
             keyboard.append(row)
             row = []
-    keyboard.append([InlineKeyboardButton("🔙 Quay lại menu chính", callback_data="menu_main")])
+    keyboard.append([InlineKeyboardButton("?? Quay l?i menu ch�nh", callback_data="menu_main")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    text = f"""🏦 **NẠP TIỀN QUA MBBANK**
+    text = f"""?? **N?P TI?N QUA MBBANK**
 
-💳 **Số TK:** `{MB_ACCOUNT}`
-👤 **Chủ TK:** {MB_NAME}
-🏦 **Ngân hàng:** MBBank
+?? **S? TK:** `{MB_ACCOUNT}`
+?? **Ch? TK:** {MB_NAME}
+?? **Ng�n h�ng:** MBBank
 
-📝 **Nội dung:** NAP {transaction_code}
+?? **N?i dung:** NAP {transaction_code}
 
-💰 **Chọn số tiền:**"""
+?? **Ch?n s? ti?n:**"""
     
     if update.callback_query:
         await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -119,7 +123,7 @@ async def deposit_command(update: Update, context: Context):
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def deposit_amount_callback(update: Update, context: Context):
-    """Xử lý khi chọn số tiền"""
+    """X? l� khi ch?n s? ti?n"""
     query = update.callback_query
     try:
         await query.answer()
@@ -134,17 +138,18 @@ async def deposit_amount_callback(update: Update, context: Context):
         if not transaction_code:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id, 
-                text="❌ Có lỗi xảy ra! Vui lòng thử lại."
+                text="? C� l?i x?y ra! Vui l�ng th? l?i."
             )
             return
         
         user = update.effective_user
         username = user.username or user.first_name or f"user_{user.id}"
         
-        # Lưu giao dịch vào database local
+        # Luu giao d?ch v�o database local
         from main import app
+from bot import app
         with app.app_context():
-            # Tìm hoặc tạo user
+            # T�m ho?c t?o user
             db_user = User.query.filter_by(user_id=user.id).first()
             if not db_user:
                 db_user = User(
@@ -155,53 +160,53 @@ async def deposit_amount_callback(update: Update, context: Context):
                 )
                 db.session.add(db_user)
                 db.session.commit()
-                logger.info(f"✅ Đã tạo user mới: {user.id}")
+                logger.info(f"? �� t?o user m?i: {user.id}")
             
-            # Tạo transaction pending
+            # T?o transaction pending
             transaction = Transaction(
                 user_id=db_user.id,
                 amount=amount,
                 type='deposit',
                 status='pending',
                 transaction_code=transaction_code,
-                description=f'Nạp {amount}đ qua MBBank',
+                description=f'N?p {amount}d qua MBBank',
                 created_at=datetime.now()
             )
             db.session.add(transaction)
             db.session.commit()
             
-            logger.info(f"✅ ĐÃ TẠO GIAO DỊCH: {transaction_code} - {amount}đ cho user {user.id}")
+            logger.info(f"? �� T?O GIAO D?CH: {transaction_code} - {amount}d cho user {user.id}")
         
-        # === TỰ ĐỘNG ĐẨY LÊN RENDER NGAY LẬP TỨC ===
+        # === T? �?NG �?Y L�N RENDER NGAY L?P T?C ===
         await asyncio.gather(
             push_user_to_render(user.id, username),
             push_transaction_to_render(transaction_code, amount, user.id, username)
         )
         
-        # Tạo QR code
+        # T?o QR code
         content = f"NAP {transaction_code}"
         encoded_content = urllib.parse.quote(content)
         qr_url = f"https://img.vietqr.io/image/{MB_BIN}-{MB_ACCOUNT}-compact2.jpg?amount={amount}&addInfo={encoded_content}&accountName={MB_NAME}"
         
         keyboard = [
-            [InlineKeyboardButton("✅ TÔI ĐÃ CHUYỂN KHOẢN", callback_data=f"deposit_check_{transaction_code}")],
-            [InlineKeyboardButton("💰 Nạp số khác", callback_data="menu_deposit")],
-            [InlineKeyboardButton("📱 Thuê số", callback_data="menu_rent")],
-            [InlineKeyboardButton("🔙 Menu chính", callback_data="menu_main")]
+            [InlineKeyboardButton("? T�I �� CHUY?N KHO?N", callback_data=f"deposit_check_{transaction_code}")],
+            [InlineKeyboardButton("?? N?p s? kh�c", callback_data="menu_deposit")],
+            [InlineKeyboardButton("?? Thu� s?", callback_data="menu_rent")],
+            [InlineKeyboardButton("?? Menu ch�nh", callback_data="menu_main")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
             photo=qr_url,
-            caption=f"""🏦 **THÔNG TIN CHUYỂN KHOẢN**
+            caption=f"""?? **TH�NG TIN CHUY?N KHO?N**
 
-💳 **STK:** `{MB_ACCOUNT}`
-👤 **Chủ TK:** {MB_NAME}
-💰 **Số tiền:** {amount:,}đ
-📝 **Nội dung:** `{content}`
+?? **STK:** `{MB_ACCOUNT}`
+?? **Ch? TK:** {MB_NAME}
+?? **S? ti?n:** {amount:,}d
+?? **N?i dung:** `{content}`
 
-✅ **Bấm nút 'TÔI ĐÃ CHUYỂN KHOẢN' sau khi chuyển!""",
+? **B?m n�t 'T�I �� CHUY?N KHO?N' sau khi chuy?n!""",
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
@@ -209,14 +214,14 @@ async def deposit_amount_callback(update: Update, context: Context):
         await query.delete_message()
         
     except Exception as e:
-        logger.error(f"Lỗi deposit_amount_callback: {e}")
+        logger.error(f"L?i deposit_amount_callback: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id, 
-            text="❌ Có lỗi xảy ra! Vui lòng thử lại."
+            text="? C� l?i x?y ra! Vui l�ng th? l?i."
         )
 
 async def deposit_check_callback(update: Update, context: Context):
-    """Xử lý khi user bấm 'TÔI ĐÃ CHUYỂN KHOẢN'"""
+    """X? l� khi user b?m 'T�I �� CHUY?N KHO?N'"""
     query = update.callback_query
     try:
         await query.answer()
@@ -225,9 +230,10 @@ async def deposit_check_callback(update: Update, context: Context):
     
     try:
         transaction_code = query.data.split('_')[2]
-        logger.info(f"👤 User báo đã chuyển khoản - Mã GD: {transaction_code}")
+        logger.info(f"?? User b�o d� chuy?n kho?n - M� GD: {transaction_code}")
         
         from main import app
+from bot import app
         with app.app_context():
             transaction = Transaction.query.filter_by(
                 transaction_code=transaction_code, 
@@ -237,37 +243,37 @@ async def deposit_check_callback(update: Update, context: Context):
             if not transaction:
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text=f"❌ **KHÔNG TÌM THẤY GIAO DỊCH**\n\nMã GD: {transaction_code}\nVui lòng thử lại hoặc liên hệ admin.",
+                    text=f"? **KH�NG T�M TH?Y GIAO D?CH**\n\nM� GD: {transaction_code}\nVui l�ng th? l?i ho?c li�n h? admin.",
                     parse_mode='Markdown'
                 )
                 return
             
-            # Cập nhật thời gian
+            # C?p nh?t th?i gian
             transaction.updated_at = datetime.now()
             db.session.commit()
             
-            # Lấy user để push lại (phòng trường hợp)
+            # L?y user d? push l?i (ph�ng tru?ng h?p)
             user = User.query.get(transaction.user_id)
             if user:
-                # Push lại user và transaction để đảm bảo
+                # Push l?i user v� transaction d? d?m b?o
                 await asyncio.gather(
                     push_user_to_render(user.user_id, user.username or f"user_{user.user_id}"),
                     push_transaction_to_render(transaction_code, transaction.amount, user.user_id, user.username)
                 )
             
-            # GỬI THÔNG BÁO CHỜ XỬ LÝ
-            text = f"""⏳ **ĐANG XỬ LÝ GIAO DỊCH**
+            # G?I TH�NG B�O CH? X? L�
+            text = f"""? **�ANG X? L� GIAO D?CH**
 
-💰 **Số tiền:** {transaction.amount:,}đ
-📝 **Mã GD:** `{transaction_code}`
+?? **S? ti?n:** {transaction.amount:,}d
+?? **M� GD:** `{transaction_code}`
 
-✅ **Đã ghi nhận yêu cầu nạp tiền của bạn.**
+? **�� ghi nh?n y�u c?u n?p ti?n c?a b?n.**
 
-⏱️ **Hệ thống đang chờ xác nhận từ ngân hàng.**
-💳 **Tiền sẽ được cộng tự động sau 1-5 phút.**
+?? **H? th?ng dang ch? x�c nh?n t? ng�n h�ng.**
+?? **Ti?n s? du?c c?ng t? d?ng sau 1-5 ph�t.**
 
-⚠️ **KHÔNG CẦN BẤM NÚT NHIỀU LẦN**
-📱 **Bạn sẽ nhận thông báo khi giao dịch hoàn tất.**"""
+?? **KH�NG C?N B?M N�T NHI?U L?N**
+?? **B?n s? nh?n th�ng b�o khi giao d?ch ho�n t?t.**"""
             
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -276,27 +282,26 @@ async def deposit_check_callback(update: Update, context: Context):
             )
             
     except Exception as e:
-        logger.error(f"Lỗi deposit_check_callback: {e}")
+        logger.error(f"L?i deposit_check_callback: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="❌ **LỖI XỬ LÝ**\n\nVui lòng thử lại sau.",
+            text="? **L?I X? L�**\n\nVui l�ng th? l?i sau.",
             parse_mode='Markdown'
         )
 
 async def check_deposit_status(update: Update, context: Context):
-    """Lệnh kiểm tra trạng thái giao dịch thủ công"""
+    """L?nh ki?m tra tr?ng th�i giao d?ch th? c�ng"""
     try:
-        # Lấy mã giao dịch từ user nhập
         if not context.args:
             await update.message.reply_text(
-                "❌ **CÚ PHÁP SAI**\n\nVui lòng nhập: `/check MÃ_GD`\nVí dụ: `/check UNOT6DOB`",
+                "? **C� PH�P SAI**\n\nVui l�ng nh?p: `/check M�_GD`\nV� d?: `/check MANUAL_20260307153425`",
                 parse_mode='Markdown'
             )
             return
         
         code = context.args[0].upper()
         
-        # Kiểm tra trên Render
+        # Ki?m tra tr�n Render
         try:
             response = requests.post(
                 f"{RENDER_URL}/api/check-transaction",
@@ -308,48 +313,63 @@ async def check_deposit_status(update: Update, context: Context):
                 data = response.json()
                 if data.get('exists'):
                     status_text = {
-                        'pending': '⏳ Đang chờ xử lý',
-                        'success': '✅ Đã thành công',
-                        'failed': '❌ Thất bại'
-                    }.get(data['status'], '❓ Không xác định')
+                        'pending': '? �ang ch? x? l�',
+                        'success': '? �� th�nh c�ng',
+                        'failed': '? Th?t b?i'
+                    }.get(data['status'], '? Kh�ng x�c d?nh')
+                    
+                    # Ki?m tra th�m tr�n local d? x�c nh?n
+                    from main import app
+from bot import app
+                    with app.app_context():
+                        local_trans = Transaction.query.filter_by(transaction_code=code).first()
+                        if local_trans:
+                            user = User.query.get(local_trans.user_id)
+                            local_status = local_trans.status
+                            local_balance = user.balance if user else 0
+                        else:
+                            local_status = 'not_found'
+                            local_balance = 0
                     
                     await update.message.reply_text(
-                        f"🔍 **KIỂM TRA GIAO DỊCH {code}**\n\n"
-                        f"📊 **Trạng thái:** {status_text}\n"
-                        f"💰 **Số tiền:** {data['amount']:,}đ\n"
-                        f"👤 **User ID:** {data['user_id']}\n\n"
-                        f"{'✅ Giao dịch đã thành công!' if data['status'] == 'success' else '⏳ Vui lòng chờ xử lý...'}",
+                        f"?? **KI?M TRA GIAO D?CH {code}**\n\n"
+                        f"?? **Render:** {status_text}\n"
+                        f"?? **Local:** {local_status}\n"
+                        f"?? **S? ti?n:** {data['amount']:,}d\n"
+                        f"?? **User ID:** {data['user_id']}\n"
+                        f"?? **S? du hi?n t?i:** {local_balance:,}d\n\n"
+                        f"{'? Giao d?ch d� th�nh c�ng!' if data['status'] == 'success' else '? Vui l�ng ch? x? l�...'}",
                         parse_mode='Markdown'
                     )
                 else:
                     await update.message.reply_text(
-                        f"❌ **KHÔNG TÌM THẤY**\n\nMã giao dịch `{code}` không tồn tại trong hệ thống.",
+                        f"? **KH�NG T�M TH?Y**\n\nM� giao d?ch `{code}` kh�ng t?n t?i trong h? th?ng.",
                         parse_mode='Markdown'
                     )
             else:
                 await update.message.reply_text(
-                    f"❌ **LỖI KẾT NỐI**\n\nKhông thể kiểm tra trạng thái. Vui lòng thử lại sau.",
+                    f"? **L?I K?T N?I**\n\nKh�ng th? ki?m tra tr?ng th�i. Vui l�ng th? l?i sau.",
                     parse_mode='Markdown'
                 )
         except Exception as e:
-            logger.error(f"Lỗi check status: {e}")
+            logger.error(f"L?i check status: {e}")
             await update.message.reply_text(
-                f"❌ **LỖI**\n\nKhông thể kết nối đến server.",
+                f"? **L?I**\n\nKh�ng th? k?t n?i d?n server.",
                 parse_mode='Markdown'
             )
             
     except Exception as e:
-        logger.error(f"Lỗi check_deposit_status: {e}")
+        logger.error(f"L?i check_deposit_status: {e}")
         await update.message.reply_text(
-            "❌ **LỖI XỬ LÝ**\n\nVui lòng thử lại sau.",
+            "? **L?I X? L�**\n\nVui l�ng th? l?i sau.",
             parse_mode='Markdown'
         )
 
-# Hàm tiện ích để fix user nếu cần
+# H�m ti?n �ch d? fix user n?u c?n
 def fix_user_manual(user_id, username, amount, transaction_code):
-    """Fix user thủ công (dùng khi cần)"""
+    """Fix user th? c�ng (d�ng khi c?n)"""
     try:
-        # Push lên Render
+        # Push l�n Render
         response = requests.post(
             f"{RENDER_URL}/api/check-user",
             json={'user_id': user_id, 'username': username},
@@ -370,8 +390,9 @@ def fix_user_manual(user_id, username, amount, transaction_code):
         )
         print(f"Push transaction: {response.json()}")
         
-        # Cập nhật local
+        # C?p nh?t local
         from main import app
+from bot import app
         with app.app_context():
             user = User.query.filter_by(user_id=user_id).first()
             if not user:
@@ -399,8 +420,8 @@ def fix_user_manual(user_id, username, amount, transaction_code):
             db.session.add(transaction)
             db.session.commit()
             
-            print(f"✅ Đã fix user {user_id} - {username} +{amount}đ")
+            print(f"? �� fix user {user_id} - {username} +{amount}d")
             return True
     except Exception as e:
-        print(f"❌ Lỗi fix: {e}")
+        print(f"? L?i fix: {e}")
         return False
