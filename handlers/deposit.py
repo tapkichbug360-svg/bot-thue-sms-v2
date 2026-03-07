@@ -17,6 +17,75 @@ MB_NAME = os.getenv('MB_NAME', 'NGUYEN THE LAM')
 MB_BIN = os.getenv('MB_BIN', '970422')
 RENDER_URL = os.getenv('RENDER_URL', 'https://bot-thue-sms-v2.onrender.com')
 
+# Cache để tránh push trùng
+pushed_transactions = set()
+
+async def push_user_to_render(user_id, username):
+    """Đẩy user lên Render ngay lập tức"""
+    try:
+        response = requests.post(
+            f"{RENDER_URL}/api/check-user",
+            json={'user_id': user_id, 'username': username},
+            timeout=5
+        )
+        if response.status_code == 200:
+            logger.info(f"✅ Đã push user {user_id} lên Render thành công")
+            return True
+        else:
+            logger.warning(f"⚠️ Push user {user_id} thất bại: {response.status_code}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ Lỗi push user {user_id}: {e}")
+        return False
+
+async def push_transaction_to_render(transaction_code, amount, user_id, username):
+    """Đẩy giao dịch lên Render ngay sau khi tạo"""
+    global pushed_transactions
+    
+    # Tránh push trùng
+    if transaction_code in pushed_transactions:
+        logger.info(f"⏭️ Giao dịch {transaction_code} đã được push trước đó")
+        return True
+    
+    try:
+        response = requests.post(
+            f"{RENDER_URL}/api/sync-pending",
+            json={
+                'transactions': [{
+                    'code': transaction_code,
+                    'amount': amount,
+                    'user_id': user_id,
+                    'username': username
+                }]
+            },
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"✅ Đã đẩy giao dịch {transaction_code} lên Render thành công: {result}")
+            pushed_transactions.add(transaction_code)
+            
+            # Giới hạn kích thước cache
+            if len(pushed_transactions) > 100:
+                pushed_transactions.clear()
+            
+            return True
+        else:
+            logger.warning(f"⚠️ Đẩy giao dịch {transaction_code} thất bại: {response.status_code}")
+            try:
+                error_detail = response.json()
+                logger.error(f"📝 Chi tiết lỗi: {error_detail}")
+            except:
+                pass
+            return False
+    except requests.exceptions.Timeout:
+        logger.error(f"❌ Timeout khi đẩy giao dịch {transaction_code}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Lỗi đẩy giao dịch {transaction_code}: {e}")
+        return False
+
 async def deposit_command(update: Update, context: Context):
     """Hiển thị menu nạp tiền"""
     transaction_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
@@ -49,24 +118,6 @@ async def deposit_command(update: Update, context: Context):
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-async def push_user_to_render(user_id, username):
-    """Đẩy user lên Render ngay lập tức"""
-    try:
-        response = requests.post(
-            f"{RENDER_URL}/api/check-user",
-            json={'user_id': user_id, 'username': username},
-            timeout=5
-        )
-        if response.status_code == 200:
-            logger.info(f"✅ Đã push user {user_id} lên Render thành công")
-            return True
-        else:
-            logger.warning(f"⚠️ Push user {user_id} thất bại: {response.status_code}")
-            return False
-    except Exception as e:
-        logger.error(f"❌ Lỗi push user {user_id}: {e}")
-        return False
-
 async def deposit_amount_callback(update: Update, context: Context):
     """Xử lý khi chọn số tiền"""
     query = update.callback_query
@@ -87,17 +138,18 @@ async def deposit_amount_callback(update: Update, context: Context):
             )
             return
         
+        user = update.effective_user
+        username = user.username or user.first_name or f"user_{user.id}"
+        
         # Lưu giao dịch vào database local
         from main import app
         with app.app_context():
-            user = update.effective_user
-            
             # Tìm hoặc tạo user
             db_user = User.query.filter_by(user_id=user.id).first()
             if not db_user:
                 db_user = User(
                     user_id=user.id,
-                    username=user.username or user.first_name,
+                    username=username,
                     balance=0,
                     created_at=datetime.now()
                 )
@@ -120,9 +172,11 @@ async def deposit_amount_callback(update: Update, context: Context):
             
             logger.info(f"✅ ĐÃ TẠO GIAO DỊCH: {transaction_code} - {amount}đ cho user {user.id}")
         
-        # === TỰ ĐỘNG PUSH USER LÊN RENDER NGAY ===
-        username = user.username or user.first_name or f"user_{user.id}"
-        await push_user_to_render(user.id, username)
+        # === TỰ ĐỘNG ĐẨY LÊN RENDER NGAY LẬP TỨC ===
+        await asyncio.gather(
+            push_user_to_render(user.id, username),
+            push_transaction_to_render(transaction_code, amount, user.id, username)
+        )
         
         # Tạo QR code
         content = f"NAP {transaction_code}"
@@ -195,8 +249,11 @@ async def deposit_check_callback(update: Update, context: Context):
             # Lấy user để push lại (phòng trường hợp)
             user = User.query.get(transaction.user_id)
             if user:
-                # Push lại user để đảm bảo
-                await push_user_to_render(user.user_id, user.username or f"user_{user.user_id}")
+                # Push lại user và transaction để đảm bảo
+                await asyncio.gather(
+                    push_user_to_render(user.user_id, user.username or f"user_{user.user_id}"),
+                    push_transaction_to_render(transaction_code, transaction.amount, user.user_id, user.username)
+                )
             
             # GỬI THÔNG BÁO CHỜ XỬ LÝ
             text = f"""⏳ **ĐANG XỬ LÝ GIAO DỊCH**
@@ -299,6 +356,19 @@ def fix_user_manual(user_id, username, amount, transaction_code):
             timeout=5
         )
         print(f"Push user: {response.json()}")
+        
+        # Push transaction
+        response = requests.post(
+            f"{RENDER_URL}/api/sync-pending",
+            json={'transactions': [{
+                'code': transaction_code,
+                'amount': amount,
+                'user_id': user_id,
+                'username': username
+            }]},
+            timeout=5
+        )
+        print(f"Push transaction: {response.json()}")
         
         # Cập nhật local
         from main import app
