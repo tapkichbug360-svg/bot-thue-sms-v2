@@ -3,7 +3,7 @@ import logging
 from database.models import User, Transaction, db
 from datetime import datetime
 import os
-import re
+import re  # Import chuẩn ở đầu file
 import asyncio
 from telegram import Bot
 
@@ -48,7 +48,7 @@ def setup_sepay_webhook(app):
             if account_number != MB_ACCOUNT:
                 return jsonify({"success": True, "message": "Wrong account"}), 200
             
-            # Tìm mã NAP
+            # Tìm mã NAP - SỬ DỤNG re CHUẨN
             match = re.search(r'NAP\s*([A-Z0-9]{8})', content.upper())
             if not match:
                 return jsonify({"success": True, "message": "No NAP code found"}), 200
@@ -110,18 +110,20 @@ def setup_sepay_webhook(app):
                             target_user = User.query.get(any_trans.user_id)
                             logger.info(f"✅ Cách 4: Tìm thấy user từ giao dịch cũ: {target_user.user_id if target_user else 'None'}")
                     
-                    # Cách 5: Tìm user có user_id gần với mã giao dịch (dự phòng)
+                    # Cách 5: Tìm user có user_id xuất hiện trong nội dung
                     if not target_user:
-                        # Thử tìm user có user_id xuất hiện trong content
-                        import re
+                        # SỬ DỤNG re ĐÚNG CÁCH - KHÔNG GHI ĐÈ
                         numbers = re.findall(r'\d+', content)
                         for num in numbers:
                             if len(num) >= 9:  # User ID thường có 10 số
-                                potential_user = User.query.filter_by(user_id=int(num)).first()
-                                if potential_user:
-                                    target_user = potential_user
-                                    logger.info(f"✅ Cách 5: Tìm thấy user từ số trong nội dung: {target_user.user_id}")
-                                    break
+                                try:
+                                    potential_user = User.query.filter_by(user_id=int(num)).first()
+                                    if potential_user:
+                                        target_user = potential_user
+                                        logger.info(f"✅ Cách 5: Tìm thấy user từ số {num} trong nội dung: {target_user.user_id}")
+                                        break
+                                except:
+                                    pass
                 
                 # NẾU KHÔNG TÌM THẤY USER - TRẢ VỀ LỖI
                 if not target_user:
@@ -129,7 +131,7 @@ def setup_sepay_webhook(app):
                     return jsonify({
                         "success": False,
                         "message": "User not found",
-                        "error": "No matching user found for this transaction. Please start the bot first."
+                        "error": "No matching user found. Please start the bot first."
                     }), 404
                 
                 # BƯỚC 3: XỬ LÝ GIAO DỊCH
@@ -148,7 +150,7 @@ def setup_sepay_webhook(app):
                     db.session.flush()
                     logger.info(f"✅ ĐÃ TẠO GIAO DỊCH MỚI: {transaction_code} cho user {target_user.user_id}")
                 
-                # KIỂM TRA SỐ TIỀN (cho phép sai số 5000đ)
+                # KIỂM TRA SỐ TIỀN
                 if abs(transaction.amount - amount) > 5000:
                     logger.error(f"❌ Số tiền không khớp: {amount} != {transaction.amount}")
                     return jsonify({"success": True, "message": "Amount mismatch"}), 200
