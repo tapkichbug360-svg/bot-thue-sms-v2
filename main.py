@@ -98,20 +98,17 @@ setup_sepay_webhook(app)
 def home():
     return "Bot đang chạy! MBBank: 666666291005 - NGUYEN THE LAM"
 
-# ===== BIẾN TOÀN CỤC =====
-last_check_time = datetime.now() - timedelta(minutes=1)
-processed_transactions = set()
+# ===== HÀM GET_OR_CREATE_USER - FIX LỖI CACHE =====
 user_cache = {}
 
 def get_or_create_user(user_id, username=None):
-    """Lấy user từ cache/db, tự động tạo nếu chưa có"""
-    global user_cache
+    """Lấy user từ database, tự động tạo nếu chưa có (KHÔNG DÙNG CACHE)"""
     
-    if user_id in user_cache:
-        return user_cache[user_id]
-    
+    # Tìm user trong database trực tiếp
     user = User.query.filter_by(user_id=user_id).first()
+    
     if not user:
+        # Tạo user mới
         user = User(
             user_id=user_id,
             username=username or f"user_{user_id}",
@@ -120,10 +117,9 @@ def get_or_create_user(user_id, username=None):
             last_active=datetime.now()
         )
         db.session.add(user)
-        db.session.commit()
+        db.session.flush()  # Để lấy ID mà không commit
         logger.info(f"🆕 ĐÃ TẠO USER MỚI: {user_id} - {user.username}")
     
-    user_cache[user_id] = user
     return user
 
 # ===== HÀM KIỂM TRA SỐ HẾT HẠN =====
@@ -447,7 +443,7 @@ def api_reset_cache():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-# ===== API 10: ĐỒNG BỘ 2 CHIỀU =====
+# ===== API 10: ĐỒNG BỘ 2 CHIỀU - FIX LỖI SESSION =====
 @app.route('/api/sync-bidirectional', methods=['POST'])
 def api_sync_bidirectional():
     try:
@@ -455,17 +451,38 @@ def api_sync_bidirectional():
         local_transactions = data.get('local_transactions', [])
         
         with app.app_context():
+            # Lấy danh sách pending trên Render
             render_pending = Transaction.query.filter_by(status='pending').all()
             render_codes = {t.transaction_code for t in render_pending}
             
             local_codes = set()
             synced_from_local = 0
+            sync_to_local = []
             
+            # 1. XỬ LÝ ĐỒNG BỘ TỪ LOCAL LÊN RENDER
             for lt in local_transactions:
                 local_codes.add(lt['code'])
+                
+                # Kiểm tra giao dịch đã tồn tại chưa
                 existing = Transaction.query.filter_by(transaction_code=lt['code']).first()
+                
                 if not existing:
-                    user = get_or_create_user(lt['user_id'], lt.get('username'))
+                    # Tìm user - đảm bảo mọi thao tác trong session
+                    user = User.query.filter_by(user_id=lt['user_id']).first()
+                    
+                    # Nếu user chưa tồn tại, tạo mới
+                    if not user:
+                        user = User(
+                            user_id=lt['user_id'],
+                            username=lt.get('username', f"user_{lt['user_id']}"),
+                            balance=0,
+                            created_at=datetime.now(),
+                            last_active=datetime.now()
+                        )
+                        db.session.add(user)
+                        db.session.flush()  # Để lấy ID mà không commit
+                    
+                    # Tạo giao dịch mới
                     new_trans = Transaction(
                         user_id=user.id,
                         amount=lt['amount'],
@@ -479,9 +496,10 @@ def api_sync_bidirectional():
                     synced_from_local += 1
                     logger.info(f"✅ Đồng bộ từ local: {lt['code']}")
             
-            sync_to_local = []
+            # 2. CHUẨN BỊ DỮ LIỆU ĐỒNG BỘ VỀ LOCAL
             for trans in render_pending:
                 if trans.transaction_code not in local_codes:
+                    # Lấy thông tin user (vẫn trong session)
                     user = User.query.get(trans.user_id)
                     if user:
                         sync_to_local.append({
@@ -492,8 +510,10 @@ def api_sync_bidirectional():
                             "created_at": trans.created_at.isoformat() if trans.created_at else None
                         })
             
+            # Commit tất cả thay đổi
             db.session.commit()
             
+            # 3. TRẢ VỀ KẾT QUẢ (không còn session)
             return jsonify({
                 "success": True,
                 "synced_from_local": synced_from_local,
