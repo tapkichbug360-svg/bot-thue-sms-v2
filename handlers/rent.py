@@ -507,7 +507,7 @@ async def rent_confirm_callback(update: Update, context: Context):
             )
 
 async def rent_check_callback(update: Update, context: Context):
-    """Kiểm tra OTP thủ công"""
+    """Kiểm tra OTP thủ công - GỬI FILE AUDIO NẾU CÓ"""
     query = update.callback_query
     await query.answer()
     
@@ -559,64 +559,131 @@ async def rent_check_callback(update: Update, context: Context):
                 otp_code = otp_data.get('code')
                 content = otp_data.get('content', '')
                 sender = otp_data.get('senderName', '')
-                audio_url = otp_data.get('audio')
+                audio_url = otp_data.get('audio')  # URL file audio cuộc gọi
                 
                 # Cập nhật trạng thái rental
                 rental.status = 'success'
-                rental.otp_code = otp_code
+                rental.otp_code = otp_code or "Audio OTP"
                 rental.content = content
                 rental.updated_at = datetime.now()
                 db.session.commit()
                 
-                text = (
-                    f"✅ **NHẬN OTP THÀNH CÔNG!**\n\n"
-                    f"📱 **Mã OTP:** `{otp_code}`\n"
-                    f"📨 **Nội dung:** {content}\n"
-                    f"📤 **Người gửi:** {sender}\n"
-                    f"📋 **Dịch vụ:** {rental.service_name}\n"
-                    f"📞 **Số:** `{rental.phone_number}`"
-                )
-                
-                # Gửi file audio nếu có
+                # === XỬ LÝ AUDIO ===
                 if audio_url:
-                    await context.bot.send_audio(
+                    try:
+                        logger.info(f"🎵 Đang tải audio từ: {audio_url}")
+                        
+                        # Tải file audio
+                        audio_response = requests.get(audio_url, timeout=15)
+                        
+                        if audio_response.status_code == 200:
+                            # Xác định định dạng file
+                            content_type = audio_response.headers.get('content-type', 'audio/mpeg')
+                            file_ext = 'mp3'
+                            if 'wav' in content_type:
+                                file_ext = 'wav'
+                            elif 'ogg' in content_type:
+                                file_ext = 'ogg'
+                            
+                            # Gửi file audio trực tiếp
+                            await context.bot.send_audio(
+                                chat_id=update.effective_chat.id,
+                                audio=audio_response.content,
+                                filename=f"otp_call_{rental_id}.{file_ext}",
+                                title=f"📞 Cuộc gọi OTP từ {rental.service_name}",
+                                caption=(
+                                    f"📞 **CUỘC GỌI OTP**\n\n"
+                                    f"• **Dịch vụ:** {rental.service_name}\n"
+                                    f"• **Số điện thoại:** `{rental.phone_number}`\n"
+                                    f"• **Thời gian:** {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}\n\n"
+                                    f"🎧 **Bấm play để nghe lại cuộc gọi**"
+                                ),
+                                parse_mode='Markdown'
+                            )
+                            logger.info(f"✅ Đã gửi file audio cuộc gọi cho rental {rental_id}")
+                            
+                        else:
+                            logger.error(f"❌ Không thể tải audio, status code: {audio_response.status_code}")
+                            # Gửi link nếu không tải được
+                            keyboard = [[InlineKeyboardButton("🔊 NGHE OTP TRÊN WEB", url=audio_url)]]
+                            reply_markup = InlineKeyboardMarkup(keyboard)
+                            await context.bot.send_message(
+                                chat_id=update.effective_chat.id,
+                                text=(
+                                    f"⚠️ **CÓ OTP DẠNG CUỘC GỌI**\n\n"
+                                    f"• **Dịch vụ:** {rental.service_name}\n"
+                                    f"• **Số:** `{rental.phone_number}`\n\n"
+                                    f"❌ Không thể tải file audio tự động.\n"
+                                    f"👉 Bấm nút bên dưới để nghe trên web:"
+                                ),
+                                reply_markup=reply_markup,
+                                parse_mode='Markdown'
+                            )
+                            
+                    except Exception as e:
+                        logger.error(f"❌ Lỗi xử lý audio: {e}")
+                        # Gửi link dự phòng
+                        keyboard = [[InlineKeyboardButton("🔊 NGHE OTP", url=audio_url)]]
+                        reply_markup = InlineKeyboardMarkup(keyboard)
+                        await context.bot.send_message(
+                            chat_id=update.effective_chat.id,
+                            text=(
+                                f"⚠️ **CÓ OTP DẠNG CUỘC GỌI**\n\n"
+                                f"• **Dịch vụ:** {rental.service_name}\n"
+                                f"• **Số:** `{rental.phone_number}`\n\n"
+                                f"👉 Bấm nút để nghe trên web:"
+                            ),
+                            reply_markup=reply_markup,
+                            parse_mode='Markdown'
+                        )
+                
+                # === GỬI OTP DẠNG TEXT NẾU CÓ ===
+                if otp_code:
+                    text_message = (
+                        f"✅ **NHẬN OTP THÀNH CÔNG!**\n\n"
+                        f"📱 **Mã OTP:** `{otp_code}`\n"
+                        f"📨 **Nội dung:** {content}\n"
+                        f"📤 **Người gửi:** {sender}\n"
+                        f"📋 **Dịch vụ:** {rental.service_name}\n"
+                        f"📞 **Số:** `{rental.phone_number}`"
+                    )
+                    await context.bot.send_message(
                         chat_id=update.effective_chat.id,
-                        audio=audio_url,
-                        title=f"OTP từ {rental.service_name}",
-                        caption=f"📞 **VOICE OTP**\nDịch vụ: {rental.service_name}\nSố: `{rental.phone_number}`",
+                        text=text_message,
+                        parse_mode='Markdown'
+                    )
+                elif not audio_url:
+                    # Không có cả audio và text
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"✅ **ĐÃ NHẬN OTP**\n\n📋 **Dịch vụ:** {rental.service_name}\n📞 **Số:** `{rental.phone_number}`",
                         parse_mode='Markdown'
                     )
                 
-                keyboard = [
-                    [InlineKeyboardButton("📋 XEM CHI TIẾT", callback_data=f"rent_view_{rental.id}")],
-                    [InlineKeyboardButton("🔙 QUAY LẠI", callback_data="menu_rent")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+                # Xóa menu cũ
+                await query.delete_message()
                 
             elif status == 202:
                 # Chưa có OTP
+                expires_in = int((rental.expires_at - datetime.now()).total_seconds() / 60)
                 await query.edit_message_text(
                     f"⏳ **CHƯA CÓ OTP**\n\n"
-                    f"• Số: `{rental.phone_number}`\n"
-                    f"• Dịch vụ: {rental.service_name}\n\n"
+                    f"• **Số:** `{rental.phone_number}`\n"
+                    f"• **Dịch vụ:** {rental.service_name}\n"
+                    f"• **Còn:** {expires_in} phút\n\n"
                     f"Vui lòng thử lại sau vài giây.",
                     parse_mode='Markdown'
                 )
                 
             elif status == 312:
-                # Đang chờ
                 await query.edit_message_text(
                     f"⏳ **ĐANG CHỜ OTP**\n\n"
-                    f"• Số: `{rental.phone_number}`\n"
-                    f"• Dịch vụ: {rental.service_name}\n\n"
-                    f"Vui lòng kiểm tra lại sau.",
+                    f"• **Số:** `{rental.phone_number}`\n"
+                    f"• **Dịch vụ:** {rental.service_name}",
                     parse_mode='Markdown'
                 )
                 
             elif status == 400:
-                # Hết hạn
                 rental.status = 'expired'
                 rental.updated_at = datetime.now()
                 db.session.commit()
@@ -654,7 +721,7 @@ async def rent_check_callback(update: Update, context: Context):
         )
 
 async def auto_check_otp_task(bot, chat_id: int, otp_id: str, rental_id: int, user_id: int, service_name: str, phone: str):
-    """Tự động kiểm tra OTP trong 5 phút"""
+    """Tự động kiểm tra OTP - GỬI FILE AUDIO KHI CÓ CUỘC GỌI"""
     logger.info(f"🚀 Bắt đầu auto-check OTP cho rental {rental_id}")
     
     max_checks = 60
@@ -677,44 +744,104 @@ async def auto_check_otp_task(bot, chat_id: int, otp_id: str, rental_id: int, us
                 otp_code = otp_data.get('code')
                 content = otp_data.get('content', '')
                 sender = otp_data.get('senderName', '')
-                audio_url = otp_data.get('audio')
+                audio_url = otp_data.get('audio')  # URL file audio cuộc gọi
                 
                 from main import app
                 with app.app_context():
                     rental = Rental.query.get(rental_id)
                     if rental and rental.status == 'waiting':
                         rental.status = 'success'
-                        rental.otp_code = otp_code
+                        rental.otp_code = otp_code or "Gọi điện"
                         rental.content = content
                         rental.updated_at = datetime.now()
                         db.session.commit()
                         
                         logger.info(f"✅ Auto-check: Nhận OTP cho rental {rental_id}")
                         
+                        # === GỬI FILE AUDIO CUỘC GỌI ===
                         if audio_url:
-                            await bot.send_audio(
-                                chat_id=chat_id,
-                                audio=audio_url,
-                                title=f"OTP từ {service_name}",
-                                caption=f"📞 **VOICE OTP**\nDịch vụ: {service_name}\nSố: `{phone}`",
-                                parse_mode='Markdown'
-                            )
+                            try:
+                                logger.info(f"🎵 Đang tải audio cuộc gọi từ: {audio_url}")
+                                
+                                # Tải file audio
+                                audio_response = requests.get(audio_url, timeout=15)
+                                
+                                if audio_response.status_code == 200:
+                                    # Xác định định dạng file
+                                    content_type = audio_response.headers.get('content-type', 'audio/mpeg')
+                                    file_ext = 'mp3'  # Mặc định
+                                    if 'wav' in content_type:
+                                        file_ext = 'wav'
+                                    elif 'ogg' in content_type:
+                                        file_ext = 'ogg'
+                                    
+                                    # Gửi file audio lên Telegram
+                                    await bot.send_audio(
+                                        chat_id=chat_id,
+                                        audio=audio_response.content,
+                                        filename=f"otp_call_{rental_id}.{file_ext}",
+                                        title=f"📞 Cuộc gọi OTP từ {service_name}",
+                                        caption=(
+                                            f"📞 **CUỘC GỌI OTP**\n\n"
+                                            f"• **Dịch vụ:** {service_name}\n"
+                                            f"• **Số điện thoại:** `{phone}`\n"
+                                            f"• **Thời gian:** {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}\n\n"
+                                            f"🎧 **Bấm play để nghe lại cuộc gọi**"
+                                        ),
+                                        parse_mode='Markdown'
+                                    )
+                                    logger.info(f"✅ Đã gửi file audio cuộc gọi cho rental {rental_id}")
+                                    
+                                    # Gửi thêm OTP text nếu có
+                                    if otp_code:
+                                        await bot.send_message(
+                                            chat_id=chat_id,
+                                            text=f"✅ **MÃ OTP:** `{otp_code}`\n📨 {content}",
+                                            parse_mode='Markdown'
+                                        )
+                                        
+                                else:
+                                    logger.error(f"❌ Không thể tải audio, status code: {audio_response.status_code}")
+                                    # Fallback: gửi link nếu không tải được
+                                    keyboard = [[InlineKeyboardButton("🔊 NGHE OTP TRÊN WEB", url=audio_url)]]
+                                    reply_markup = InlineKeyboardMarkup(keyboard)
+                                    await bot.send_message(
+                                        chat_id=chat_id,
+                                        text=(
+                                            f"⚠️ **CÓ OTP DẠNG CUỘC GỌI**\n\n"
+                                            f"• **Dịch vụ:** {service_name}\n"
+                                            f"• **Số:** `{phone}`\n\n"
+                                            f"❌ Không thể tải file audio tự động.\n"
+                                            f"👉 Bấm nút bên dưới để nghe trên web:"
+                                        ),
+                                        reply_markup=reply_markup,
+                                        parse_mode='Markdown'
+                                    )
+                                    
+                            except Exception as e:
+                                logger.error(f"❌ Lỗi xử lý audio: {e}")
+                                # Fallback
+                                keyboard = [[InlineKeyboardButton("🔊 NGHE OTP", url=audio_url)]]
+                                reply_markup = InlineKeyboardMarkup(keyboard)
+                                await bot.send_message(
+                                    chat_id=chat_id,
+                                    text=f"⚠️ **CÓ OTP DẠNG CUỘC GỌI**\n\n👉 Bấm nút để nghe:",
+                                    reply_markup=reply_markup,
+                                    parse_mode='Markdown'
+                                )
                         
-                        if otp_code:
+                        # Nếu không có audio, chỉ gửi text
+                        elif otp_code:
                             await bot.send_message(
                                 chat_id=chat_id,
-                                text=f"✅ **TỰ ĐỘNG NHẬN OTP!**\n\n"
-                                     f"📱 **Mã:** `{otp_code}`\n"
-                                     f"📨 **Nội dung:** {content}\n"
-                                     f"📤 **Người gửi:** {sender}\n"
-                                     f"📋 **Dịch vụ:** {service_name}\n"
-                                     f"📞 **Số:** `{phone}`",
+                                text=f"✅ **MÃ OTP:** `{otp_code}`\n📨 {content}",
                                 parse_mode='Markdown'
                             )
                         
                         return
                         
             elif status in [202, 312]:
+                # Đang chờ OTP
                 pass
             elif status == 400:
                 from main import app
@@ -727,9 +854,7 @@ async def auto_check_otp_task(bot, chat_id: int, otp_id: str, rental_id: int, us
                         
                         await bot.send_message(
                             chat_id=chat_id,
-                            text=f"⏰ **OTP HẾT HẠN**\n\n"
-                                 f"Số `{phone}` đã hết hạn.\n"
-                                 f"Vui lòng thuê số mới.",
+                            text=f"⏰ **OTP HẾT HẠN**\n\nSố `{phone}` đã hết hạn.",
                             parse_mode='Markdown'
                         )
                         return
@@ -742,9 +867,7 @@ async def auto_check_otp_task(bot, chat_id: int, otp_id: str, rental_id: int, us
     logger.info(f"⏰ Hết thời gian auto-check cho rental {rental_id}")
     await bot.send_message(
         chat_id=chat_id,
-        text=f"⏰ **ĐÃ HẾT THỜI GIAN CHỜ OTP**\n\n"
-             f"Số `{phone}` đã hết hạn.\n"
-             f"Vui lòng kiểm tra thủ công hoặc hủy số.",
+        text=f"⏰ **ĐÃ HẾT THỜI GIAN CHỜ OTP**\n\nSố `{phone}` đã hết hạn.",
         parse_mode='Markdown'
     )
 
