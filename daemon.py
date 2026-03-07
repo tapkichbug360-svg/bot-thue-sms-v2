@@ -99,21 +99,21 @@ class UserSyncDaemon:
                 cursor = conn.cursor()
                 
                 # Lấy số dư cũ
-                cursor.execute('SELECT balance FROM users WHERE user_id = %s', (user_id,))
+                cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
                 old = cursor.fetchone()
                 old_balance = old[0] if old else 0
                 
                 # Cập nhật số dư
                 if old_balance != render_balance:
-                    cursor.execute('UPDATE users SET balance = %s WHERE user_id = %s', (render_balance, user_id))
+                    cursor.execute('UPDATE users SET balance = ? WHERE user_id = ?', (render_balance, user_id))
                     print(f"  💰 User {user_id}: {old_balance}đ → {render_balance}đ")
                 
                 # Cập nhật giao dịch
                 for trans in data['transactions']:
                     cursor.execute("""
                         UPDATE transactions 
-                        SET status = %s, updated_at = %s 
-                        WHERE transaction_code = %s
+                        SET status = ?, updated_at = ? 
+                        WHERE transaction_code = ?
                     """, (trans['status'], datetime.now(), trans['code']))
                 
                 conn.commit()
@@ -222,3 +222,5 @@ if __name__ == "__main__":
         daemon.sync_user_balance(uid)
     else:
         print("👋 Tạm biệt!")
+
+
