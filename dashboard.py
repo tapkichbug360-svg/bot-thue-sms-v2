@@ -879,13 +879,13 @@ def add_money():
     
     if not user_id or not amount or amount < 1000:
         flash('Vui lòng nhập đủ thông tin và số tiền phải >= 1000đ', 'danger')
-        return redirect(request.referrer or url_for('dashboard.manual'))
+        return redirect(request.referrer or url_for('manual'))
     
     with app.app_context():
         user = User.query.filter_by(user_id=user_id).first()
         if not user:
             flash(f'Không tìm thấy user có ID {user_id}', 'danger')
-            return redirect(request.referrer or url_for('dashboard.manual'))
+            return redirect(request.referrer or url_for('manual'))
         
         # Lưu số dư cũ
         old_balance = user.balance
@@ -930,7 +930,7 @@ def add_money():
               f'• Mã GD: {transaction_code}\n'
               f'• Số dư mới: {user.balance:,}đ', 'success')
     
-    return redirect(url_for('dashboard.manual'))
+    return redirect(url_for('manual'))
 
 @app.route('/toggle_ban', methods=['POST'])
 def toggle_ban():
