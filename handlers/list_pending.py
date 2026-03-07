@@ -1,4 +1,4 @@
-import sqlite3
+﻿import sqlite3
 from bot import app
 
 print("📋 DANH SÁCH GIAO DỊCH PENDING")

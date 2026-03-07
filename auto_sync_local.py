@@ -60,19 +60,19 @@ def sync_bidirectional():
                 cursor = conn.cursor()
                 
                 for trans in sync_to_local:
-                    cursor.execute("SELECT id FROM users WHERE user_id = ?", (trans['user_id'],))
+                    cursor.execute("SELECT id FROM users WHERE user_id = %s", (trans['user_id'],))
                     user = cursor.fetchone()
                     
                     if not user:
                         cursor.execute("""
                             INSERT INTO users (user_id, username, balance, created_at, last_active)
-                            VALUES (?, ?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s, %s)
                         """, (trans['user_id'], f"user_{trans['user_id']}", 0, datetime.now(), datetime.now()))
                         user_id = cursor.lastrowid
                     else:
                         user_id = user[0]
                     
-                    cursor.execute("SELECT id FROM transactions WHERE transaction_code = ?", (trans['code'],))
+                    cursor.execute("SELECT id FROM transactions WHERE transaction_code = %s", (trans['code'],))
                     existing = cursor.fetchone()
                     
                     if not existing:
@@ -116,19 +116,19 @@ def force_sync_user(user_id):
             cursor = conn.cursor()
             
             # Lấy số dư cũ
-            cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
+            cursor.execute('SELECT balance FROM users WHERE user_id = %s', (user_id,))
             old = cursor.fetchone()
             old_balance = old[0] if old else 0
             
             # Cập nhật số dư mới
-            cursor.execute('UPDATE users SET balance = ? WHERE user_id = ?', (render_balance, user_id))
+            cursor.execute('UPDATE users SET balance = %s WHERE user_id = %s', (render_balance, user_id))
             
             # Cập nhật trạng thái giao dịch
             for trans in data['transactions']:
                 cursor.execute("""
                     UPDATE transactions 
-                    SET status = ?, updated_at = ? 
-                    WHERE transaction_code = ?
+                    SET status = %s, updated_at = %s 
+                    WHERE transaction_code = %s
                 """, (trans['status'], datetime.now(), trans['code']))
             
             conn.commit()
@@ -161,17 +161,17 @@ def auto_sync_from_render():
                 
                 synced = 0
                 for trans in data['transactions']:
-                    cursor.execute("SELECT id FROM transactions WHERE transaction_code = ?", (trans['code'],))
+                    cursor.execute("SELECT id FROM transactions WHERE transaction_code = %s", (trans['code'],))
                     existing = cursor.fetchone()
                     
                     if not existing:
-                        cursor.execute("SELECT id FROM users WHERE user_id = ?", (trans['user_id'],))
+                        cursor.execute("SELECT id FROM users WHERE user_id = %s", (trans['user_id'],))
                         user = cursor.fetchone()
                         
                         if not user:
                             cursor.execute("""
                                 INSERT INTO users (user_id, username, balance, created_at, last_active)
-                                VALUES (?, ?, ?, ?, ?)
+                                VALUES (%s, %s, %s, %s, %s)
                             """, (trans['user_id'], f"user_{trans['user_id']}", 0, datetime.now(), datetime.now()))
                             user_id = cursor.lastrowid
                         else:
@@ -216,3 +216,5 @@ if __name__ == "__main__":
             auto_sync_from_render()
         
         time.sleep(10)
+
+

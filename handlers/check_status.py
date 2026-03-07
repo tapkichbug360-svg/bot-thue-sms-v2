@@ -1,4 +1,4 @@
-import sqlite3
+﻿import sqlite3
 from bot import app
 
 print("🔍 KIỂM TRA TRẠNG THÁI HỆ THỐNG")
@@ -23,7 +23,7 @@ print(f"📊 Transactions: {total_trans} (pending: {pending}, success: {success}
 
 # Kiểm tra số dư user cụ thể
 user_id = 5180190297
-cursor.execute("SELECT username, balance FROM users WHERE user_id = ?", (user_id,))
+cursor.execute("SELECT username, balance FROM users WHERE user_id = %s", (user_id,))
 user = cursor.fetchone()
 if user:
     print(f"💰 User {user_id} (@{user[0]}): {user[1]:,}đ")

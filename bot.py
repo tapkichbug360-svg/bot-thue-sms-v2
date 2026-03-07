@@ -7,15 +7,31 @@ import psutil
 import requests
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from dotenv import load_dotenv
+from flask import Flask
+from database.models import db, User, Transaction
 
+# Load environment variables
 load_dotenv()
+
+# Cấu hình logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Lấy BOT_TOKEN từ biến môi trường
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
     logger.error("❌ KHÔNG TÌM THẤY BOT_TOKEN")
     sys.exit(1)
+
+# === FIX DATABASE: ĐỒNG BỘ VỚI DASHBOARD ===
+# Tạo Flask app context để dùng chung database với dashboard
+app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+db_path = os.path.join(BASE_DIR, 'database', 'bot.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db.init_app(app)
+logger.info(f"✅ Database path: {db_path}")
 
 try:
     from handlers.start import start_command
@@ -33,6 +49,7 @@ except Exception as e:
     sys.exit(1)
 
 def kill_other_instances():
+    """Kill các instance bot cũ để tránh conflict"""
     current_pid = os.getpid()
     killed = 0
     try:
@@ -52,6 +69,7 @@ def kill_other_instances():
     return killed
 
 def cleanup_telegram():
+    """Cleanup webhook và connection cũ"""
     try:
         close_url = f"https://api.telegram.org/bot{BOT_TOKEN}/close"
         close_res = requests.post(close_url)
@@ -64,6 +82,7 @@ def cleanup_telegram():
         logger.error(f"Cleanup error: {e}")
 
 async def main():
+    """Hàm chính khởi động bot"""
     killed = kill_other_instances()
     if killed > 0:
         logger.info(f"Đã kill {killed} instance cũ")
@@ -71,6 +90,15 @@ async def main():
     
     try:
         logger.info("🚀 BOT ĐANG KHỞI ĐỘNG...")
+        
+        # Tạo application context cho database
+        with app.app_context():
+            # Kiểm tra kết nối database
+            try:
+                user_count = User.query.count()
+                logger.info(f"✅ Kết nối database thành công! Số user: {user_count}")
+            except Exception as e:
+                logger.error(f"❌ Lỗi kết nối database: {e}")
         
         application = Application.builder().token(BOT_TOKEN).build()
         

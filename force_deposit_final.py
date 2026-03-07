@@ -19,8 +19,8 @@ else:
 # Cập nhật giao dịch thành success
 cursor.execute("""
     UPDATE transactions 
-    SET status = ?, updated_at = ? 
-    WHERE transaction_code = ?
+    SET status = %s, updated_at = %s 
+    WHERE transaction_code = %s
 """, ('success', datetime.now(), 'UNOT6DOB'))
 
 # Cộng tiền cho user
@@ -42,3 +42,4 @@ print(f'📊 Trạng thái mới: {new_status}')
 
 # Đóng kết nối
 conn.close()
+

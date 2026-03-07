@@ -19,9 +19,10 @@ if row:
 else:
     cursor.execute("""
         INSERT INTO users (user_id, username, balance, created_at, last_active)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
     """, (7452863721, 'unknown_user', 0, datetime.now(), datetime.now()))
     conn.commit()
     print('✅ Đã thêm user 7452863721 vào database')
 
 conn.close()
+

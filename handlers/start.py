@@ -1,14 +1,11 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+﻿from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from bot import app
 from telegram.ext import CallbackContext as Context
-from bot import app
 from database.models import User, db
-from bot import app
 from datetime import datetime
 import logging
 import os
 import requests
-from bot import app
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +14,7 @@ MB_NAME = os.getenv('MB_NAME', 'NGUYEN THE LAM')
 RENDER_URL = os.getenv('RENDER_URL', 'https://bot-thue-sms-v2.onrender.com')
 
 async def sync_balance_with_render(user_id):
-    """�?ng b? s? du t? Render v? local"""
+    """Đồng bộ số dư từ Render về local"""
     try:
         response = requests.post(
             f"{RENDER_URL}/api/force-sync-user",
@@ -29,19 +26,15 @@ async def sync_balance_with_render(user_id):
             data = response.json()
             render_balance = data['balance']
             
-            from main import app
-from bot import app
             with app.app_context():
                 user = User.query.filter_by(user_id=user_id).first()
                 if user and user.balance != render_balance:
                     old_balance = user.balance
                     user.balance = render_balance
                     
-                    # C?p nh?t c�c giao d?ch
+                    # Cập nhật các giao dịch
                     for trans in data['transactions']:
-                        # T�m v� c?p nh?t transaction
                         from database.models import Transaction
-from bot import app
                         transaction = Transaction.query.filter_by(
                             transaction_code=trans['code']
                         ).first()
@@ -50,20 +43,18 @@ from bot import app
                             transaction.updated_at = datetime.now()
                     
                     db.session.commit()
-                    logger.info(f"? �?ng b? user {user_id}: {old_balance}d ? {render_balance}d")
+                    logger.info(f"✅ Đồng bộ user {user_id}: {old_balance}đ → {render_balance}đ")
                     return True
             return True
         return False
     except Exception as e:
-        logger.error(f"? L?i d?ng b? user {user_id}: {e}")
+        logger.error(f"❌ Lỗi đồng bộ user {user_id}: {e}")
         return False
 
 async def start_command(update: Update, context: Context):
-    """X? l� l?nh /start"""
+    """Xử lý lệnh /start"""
     user = update.effective_user
     
-    from main import app
-from bot import app
     with app.app_context():
         existing_user = User.query.filter_by(user_id=user.id).first()
         if not existing_user:
@@ -76,51 +67,51 @@ from bot import app
             )
             db.session.add(new_user)
             db.session.commit()
-            logger.info(f"? Ngu?i d�ng m?i: {user.id} - {user.first_name}")
+            logger.info(f"🆕 Người dùng mới: {user.id} - {user.first_name}")
             
-            # Push user m?i l�n Render
+            # Push user mới lên Render
             try:
                 push_response = requests.post(
                     f"{RENDER_URL}/api/check-user",
                     json={'user_id': user.id, 'username': user.username or user.first_name},
                     timeout=5
                 )
-                logger.info(f"? �� push user m?i l�n Render: {push_response.status_code}")
+                logger.info(f"✅ Đã push user mới lên Render: {push_response.status_code}")
             except:
                 pass
         else:
             existing_user.last_active = datetime.now()
             db.session.commit()
-            logger.info(f"?? Ngu?i d�ng cu: {user.id} - {user.first_name}")
+            logger.info(f"👤 Người dùng cũ: {user.id} - {user.first_name}")
             
-            # �?ng b? s? du t? Render
+            # Đồng bộ số dư từ Render
             await sync_balance_with_render(user.id)
     
-    # T?o keyboard menu ch�nh
+    # Tạo keyboard menu chính
     keyboard = [
-        [InlineKeyboardButton("?? Thu� s?", callback_data='menu_rent'),
-         InlineKeyboardButton("?? S? dang thu�", callback_data='menu_rent_list')],
-        [InlineKeyboardButton("?? S? du", callback_data='menu_balance'),
-         InlineKeyboardButton("?? N?p ti?n", callback_data='menu_deposit')],
-        [InlineKeyboardButton("?? L?ch s?", callback_data='menu_history'),
-         InlineKeyboardButton("?? T�i kho?n", callback_data='menu_profile')],
-        [InlineKeyboardButton("? Hu?ng d?n", callback_data='menu_help')]
+        [InlineKeyboardButton("📱 Thuê số", callback_data='menu_rent'),
+         InlineKeyboardButton("📋 Số đang thuê", callback_data='menu_rent_list')],
+        [InlineKeyboardButton("💰 Số dư", callback_data='menu_balance'),
+         InlineKeyboardButton("💳 Nạp tiền", callback_data='menu_deposit')],
+        [InlineKeyboardButton("📜 Lịch sử", callback_data='menu_history'),
+         InlineKeyboardButton("👤 Tài khoản", callback_data='menu_profile')],
+        [InlineKeyboardButton("❓ Hướng dẫn", callback_data='menu_help')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     welcome_msg = (
-        f"?? **Ch�o m?ng {user.first_name} d?n v?i Bot Thu� SMS!**\n\n"
-        f"?? Bot cung c?p d?ch v? thu� s? di?n tho?i ?o:\n"
-        f"� Facebook � Google � Tiktok � Shopee � C�c d?ch v? kh�c\n\n"
-        f"?? **TU�N TH? PH�P LU?T:**\n"
-        f"� Nghi�m c?m l?a d?o, c� d?, bank ?o\n"
-        f"� Vi ph?m s? kh�a t�i kho?n\n\n"
-        f"?? **MBBANK**\n"
-        f"?? **S? TK:** `{MB_ACCOUNT}`\n"
-        f"?? **Ch? TK:** `{MB_NAME}`\n\n"
-        f"?? **Hu?ng d?n nhanh:**\n"
-        f"� Ch?n 'Thu� s?' d? b?t d?u\n"
-        f"� Ch?n 'S? dang thu�' d? xem c�c s? d� thu�"
+        f"🎉 **Chào mừng {user.first_name} đến với Bot Thuê SMS!**\n\n"
+        f"🤖 Bot cung cấp dịch vụ thuê số điện thoại ảo:\n"
+        f"• Facebook • Google • Tiktok • Shopee • Các dịch vụ khác\n\n"
+        f"⚠️ **TUÂN THỦ PHÁP LUẬT:**\n"
+        f"• Nghiêm cấm lừa đảo, cá độ, bank ảo\n"
+        f"• Vi phạm sẽ khóa tài khoản\n\n"
+        f"🏦 **MBBANK**\n"
+        f"🔢 **Số TK:** `{MB_ACCOUNT}`\n"
+        f"👤 **Chủ TK:** `{MB_NAME}`\n\n"
+        f"📌 **Hướng dẫn nhanh:**\n"
+        f"• Chọn 'Thuê số' để bắt đầu\n"
+        f"• Chọn 'Số đang thuê' để xem các số đã thuê"
     )
     
     await update.message.reply_text(
@@ -130,27 +121,27 @@ from bot import app
     )
 
 async def menu_command(update: Update, context: Context):
-    """Hi?n th? menu ch�nh"""
+    """Hiển thị menu chính"""
     query = update.callback_query
     if query:
         await query.answer()
     
-    # �?ng b? s? du tru?c khi hi?n th? menu
+    # Đồng bộ số dư trước khi hiển thị menu
     user = update.effective_user
     await sync_balance_with_render(user.id)
     
     keyboard = [
-        [InlineKeyboardButton("?? Thu� s?", callback_data='menu_rent'),
-         InlineKeyboardButton("?? S? dang thu�", callback_data='menu_rent_list')],
-        [InlineKeyboardButton("?? S? du", callback_data='menu_balance'),
-         InlineKeyboardButton("?? N?p ti?n", callback_data='menu_deposit')],
-        [InlineKeyboardButton("?? L?ch s?", callback_data='menu_history'),
-         InlineKeyboardButton("?? T�i kho?n", callback_data='menu_profile')],
-        [InlineKeyboardButton("? Hu?ng d?n", callback_data='menu_help')]
+        [InlineKeyboardButton("📱 Thuê số", callback_data='menu_rent'),
+         InlineKeyboardButton("📋 Số đang thuê", callback_data='menu_rent_list')],
+        [InlineKeyboardButton("💰 Số dư", callback_data='menu_balance'),
+         InlineKeyboardButton("💳 Nạp tiền", callback_data='menu_deposit')],
+        [InlineKeyboardButton("📜 Lịch sử", callback_data='menu_history'),
+         InlineKeyboardButton("👤 Tài khoản", callback_data='menu_profile')],
+        [InlineKeyboardButton("❓ Hướng dẫn", callback_data='menu_help')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    text = "?? **MENU CH�NH**\n\nCh?n ch?c nang b?n mu?n s? d?ng:"
+    text = "🎯 **MENU CHÍNH**\n\nChọn chức năng bạn muốn sử dụng:"
     
     if query:
         try:
@@ -160,7 +151,7 @@ async def menu_command(update: Update, context: Context):
                 parse_mode='Markdown'
             )
         except Exception as e:
-            logger.error(f"L?i edit message: {e}")
+            logger.error(f"Lỗi edit message: {e}")
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=text,
@@ -175,11 +166,11 @@ async def menu_command(update: Update, context: Context):
         )
 
 async def cancel(update: Update, context: Context):
-    """H?y thao t�c hi?n t?i"""
+    """Hủy thao tác hiện tại"""
     query = update.callback_query
-    keyboard = [[InlineKeyboardButton("?? QUAY L?I MENU", callback_data="menu_main")]]
+    keyboard = [[InlineKeyboardButton("🔙 QUAY LẠI MENU", callback_data="menu_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    text = "? **�� H?Y THAO T�C!**\n\nB?n c� th? ch?n ch?c nang kh�c."
+    text = "❌ **ĐÃ HỦY THAO TÁC!**\n\nBạn có thể chọn chức năng khác."
     
     if query:
         await query.answer()
@@ -196,33 +187,33 @@ async def cancel(update: Update, context: Context):
         )
 
 async def help_command(update: Update, context: Context):
-    """Hi?n th? hu?ng d?n chi ti?t"""
+    """Hiển thị hướng dẫn chi tiết"""
     text = (
-        "? **HU?NG D?N CHI TI?T**\n\n"
-        "1?? **N?p ti?n:**\n"
-        "   � Ch?n 'N?p ti?n' ? Ch?n s? ti?n\n"
-        "   � Chuy?n kho?n d?n t�i kho?n:\n"
-        f"     ?? {MB_ACCOUNT} - {MB_NAME}\n"
-        "   � Nh?p n?i dung ch�nh x�c d? du?c c?ng t? d?ng\n\n"
-        "2?? **Thu� s?:**\n"
-        "   � Ch?n 'Thu� s?' ? Ch?n d?ch v?\n"
-        "   � Ch?n nh� m?ng ? X�c nh?n\n"
-        "   � Bot t? d?ng ki?m tra OTP trong 5 ph�t\n\n"
-        "3?? **Qu?n l� s?:**\n"
-        "   � 'S? dang thu�': Xem t?t c? s? dang active\n"
-        "   � Click v�o s? d? xem chi ti?t/h?y s?\n"
-        "   � H?y s? du?c ho�n ti?n (n?u chua c� OTP)\n\n"
-        "4?? **Ki?m tra giao d?ch:**\n"
-        "   � D�ng l?nh `/check M�_GD` d? xem tr?ng th�i\n"
-        "   � V� d?: `/check MANUAL_20260307153425`\n\n"
-        "?? **QUY �?NH:**\n"
-        "� Kh�ng l?a d?o, c� d?, d�nh b?c\n"
-        "� Kh�ng t?o bank ?o, ti?n ?o\n"
-        "� Vi ph?m s? kh�a t�i kho?n vinh vi?n\n\n"
-        f"?? **H? tr?:** Li�n h? admin @makkllai"
+        "📚 **HƯỚNG DẪN CHI TIẾT**\n\n"
+        "1️⃣ **Nạp tiền:**\n"
+        "   • Chọn 'Nạp tiền' → Chọn số tiền\n"
+        "   • Chuyển khoản đến tài khoản:\n"
+        f"     🏦 {MB_ACCOUNT} - {MB_NAME}\n"
+        "   • Nhập nội dung chính xác để được cộng tự động\n\n"
+        "2️⃣ **Thuê số:**\n"
+        "   • Chọn 'Thuê số' → Chọn dịch vụ\n"
+        "   • Chọn nhà mạng → Xác nhận\n"
+        "   • Bot tự động kiểm tra OTP trong 5 phút\n\n"
+        "3️⃣ **Quản lý số:**\n"
+        "   • 'Số đang thuê': Xem tất cả số đang active\n"
+        "   • Click vào số để xem chi tiết/hủy số\n"
+        "   • Hủy số được hoàn tiền (nếu chưa có OTP)\n\n"
+        "4️⃣ **Kiểm tra giao dịch:**\n"
+        "   • Dùng lệnh `/check MÃ_GD` để xem trạng thái\n"
+        "   • Ví dụ: `/check MANUAL_20260307153425`\n\n"
+        "⚠️ **QUY ĐỊNH:**\n"
+        "• Không lừa đảo, cá độ, đánh bạc\n"
+        "• Không tạo bank ảo, tiền ảo\n"
+        "• Vi phạm sẽ khóa tài khoản vĩnh viễn\n\n"
+        f"📞 **Hỗ trợ:** Liên hệ admin @makkllai"
     )
     
-    keyboard = [[InlineKeyboardButton("?? Quay l?i menu", callback_data="menu_main")]]
+    keyboard = [[InlineKeyboardButton("🔙 Quay lại menu", callback_data="menu_main")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     if update.callback_query:
@@ -239,18 +230,18 @@ async def help_command(update: Update, context: Context):
         )
 
 async def check_command(update: Update, context: Context):
-    """L?nh ki?m tra tr?ng th�i giao d?ch th? c�ng"""
+    """Lệnh kiểm tra trạng thái giao dịch thủ công"""
     try:
         if not context.args:
             await update.message.reply_text(
-                "? **C� PH�P SAI**\n\nVui l�ng nh?p: `/check M�_GD`\nV� d?: `/check MANUAL_20260307153425`",
+                "❌ **CÚ PHÁP SAI**\n\nVui lòng nhập: `/check MÃ_GD`\nVí dụ: `/check MANUAL_20260307153425`",
                 parse_mode='Markdown'
             )
             return
         
         code = context.args[0].upper()
         
-        # Ki?m tra tr�n Render
+        # Kiểm tra trên Render
         try:
             response = requests.post(
                 f"{RENDER_URL}/api/check-transaction",
@@ -262,17 +253,14 @@ async def check_command(update: Update, context: Context):
                 data = response.json()
                 if data.get('exists'):
                     status_text = {
-                        'pending': '? �ang ch? x? l�',
-                        'success': '? �� th�nh c�ng',
-                        'failed': '? Th?t b?i'
-                    }.get(data['status'], '? Kh�ng x�c d?nh')
+                        'pending': '⏳ Đang chờ xử lý',
+                        'success': '✅ Đã thành công',
+                        'failed': '❌ Thất bại'
+                    }.get(data['status'], '❓ Không xác định')
                     
-                    # Ki?m tra th�m tr�n local d? x�c nh?n
-                    from main import app
-from bot import app
+                    # Kiểm tra thêm trên local để xác nhận
                     with app.app_context():
                         from database.models import Transaction, User
-from bot import app
                         local_trans = Transaction.query.filter_by(transaction_code=code).first()
                         if local_trans:
                             user = User.query.get(local_trans.user_id)
@@ -283,58 +271,56 @@ from bot import app
                             local_balance = 0
                     
                     await update.message.reply_text(
-                        f"?? **KI?M TRA GIAO D?CH {code}**\n\n"
-                        f"?? **Render:** {status_text}\n"
-                        f"?? **Local:** {local_status}\n"
-                        f"?? **S? ti?n:** {data['amount']:,}d\n"
-                        f"?? **User ID:** {data['user_id']}\n"
-                        f"?? **S? du hi?n t?i:** {local_balance:,}d\n\n"
-                        f"{'? Giao d?ch d� th�nh c�ng!' if data['status'] == 'success' else '? Vui l�ng ch? x? l�...'}",
+                        f"🔍 **KIỂM TRA GIAO DỊCH {code}**\n\n"
+                        f"🌐 **Render:** {status_text}\n"
+                        f"💻 **Local:** {local_status}\n"
+                        f"💰 **Số tiền:** {data['amount']:,}đ\n"
+                        f"🆔 **User ID:** {data['user_id']}\n"
+                        f"💵 **Số dư hiện tại:** {local_balance:,}đ\n\n"
+                        f"{'✅ Giao dịch đã thành công!' if data['status'] == 'success' else '⏳ Vui lòng chờ xử lý...'}",
                         parse_mode='Markdown'
                     )
                 else:
                     await update.message.reply_text(
-                        f"? **KH�NG T�M TH?Y**\n\nM� giao d?ch `{code}` kh�ng t?n t?i trong h? th?ng.",
+                        f"❌ **KHÔNG TÌM THẤY**\n\nMã giao dịch `{code}` không tồn tại trong hệ thống.",
                         parse_mode='Markdown'
                     )
             else:
                 await update.message.reply_text(
-                    f"? **L?I K?T N?I**\n\nKh�ng th? ki?m tra tr?ng th�i. Vui l�ng th? l?i sau.",
+                    f"⚠️ **LỖI KẾT NỐI**\n\nKhông thể kiểm tra trạng thái. Vui lòng thử lại sau.",
                     parse_mode='Markdown'
                 )
         except requests.exceptions.ConnectionError:
             await update.message.reply_text(
-                "? **L?I K?T N?I**\n\nKh�ng th? k?t n?i d?n server Render. Vui l�ng th? l?i sau.",
+                "⚠️ **LỖI KẾT NỐI**\n\nKhông thể kết nối đến server Render. Vui lòng thử lại sau.",
                 parse_mode='Markdown'
             )
         except Exception as e:
-            logger.error(f"L?i check status: {e}")
+            logger.error(f"Lỗi check status: {e}")
             await update.message.reply_text(
-                f"? **L?I**\n\nKh�ng th? ki?m tra tr?ng th�i. Vui l�ng th? l?i sau.",
+                f"⚠️ **LỖI**\n\nKhông thể kiểm tra trạng thái. Vui lòng thử lại sau.",
                 parse_mode='Markdown'
             )
             
     except Exception as e:
-        logger.error(f"L?i check_deposit_status: {e}")
+        logger.error(f"Lỗi check_deposit_status: {e}")
         await update.message.reply_text(
-            "? **L?I X? L�**\n\nVui l�ng th? l?i sau.",
+            "⚠️ **LỖI XỬ LÝ**\n\nVui lòng thử lại sau.",
             parse_mode='Markdown'
         )
 
 async def balance_command(update: Update, context: Context):
-    """Xem s? du t�i kho?n - C� �?NG B? V?I RENDER"""
+    """Xem số dư tài khoản - CÓ ĐỒNG BỘ VỚI RENDER"""
     user = update.effective_user
     
-    # �?ng b? s? du t? Render tru?c
+    # Đồng bộ số dư từ Render trước
     await sync_balance_with_render(user.id)
     
-    from main import app
-from bot import app
     with app.app_context():
         db_user = User.query.filter_by(user_id=user.id).first()
         
         if not db_user:
-            text = "? KH�NG T�M TH?Y T�I KHO?N\n\nVui l�ng g?i /start d? dang k�."
+            text = "❌ KHÔNG TÌM THẤY TÀI KHOẢN\n\nVui lòng gửi /start để đăng ký."
             if update.callback_query:
                 await update.callback_query.edit_message_text(text)
             else:
@@ -346,20 +332,20 @@ from bot import app
         total_rentals = db_user.total_rentals
         
         text = (
-            f"?? **S? DU T�I KHO?N**\n\n"
-            f"� **User ID:** `{user.id}`\n"
-            f"� **T�n:** {user.first_name}\n"
-            f"� **Username:** @{user.username or 'N/A'}\n\n"
-            f"?? **S? du hi?n t?i:** `{balance:,}d`\n"
-            f"?? **�� thu�:** {total_rentals} s?\n"
-            f"?? **T?ng chi:** {total_spent:,}d\n\n"
-            f"?? **Ch?n thao t�c:**"
+            f"💰 **SỐ DƯ TÀI KHOẢN**\n\n"
+            f"• **User ID:** `{user.id}`\n"
+            f"• **Tên:** {user.first_name}\n"
+            f"• **Username:** @{user.username or 'N/A'}\n\n"
+            f"💵 **Số dư hiện tại:** `{balance:,}đ`\n"
+            f"📊 **Đã thuê:** {total_rentals} số\n"
+            f"💸 **Tổng chi:** {total_spent:,}đ\n\n"
+            f"🔽 **Chọn thao tác:**"
         )
         
         keyboard = [
-            [InlineKeyboardButton("?? N?p ti?n", callback_data="menu_deposit")],
-            [InlineKeyboardButton("?? Thu� s?", callback_data="menu_rent")],
-            [InlineKeyboardButton("?? Menu ch�nh", callback_data="menu_main")]
+            [InlineKeyboardButton("💳 Nạp tiền", callback_data="menu_deposit")],
+            [InlineKeyboardButton("📱 Thuê số", callback_data="menu_rent")],
+            [InlineKeyboardButton("🔙 Menu chính", callback_data="menu_main")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         

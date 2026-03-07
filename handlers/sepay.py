@@ -1,15 +1,13 @@
-from flask import request, jsonify, make_response
+﻿from flask import request, jsonify
 import logging
 from bot import app
 from database.models import User, Transaction, db
-from bot import app
 from datetime import datetime
 import os
 import re
 import asyncio
-from bot import app
+import hashlib
 from telegram import Bot
-from bot import app
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +25,9 @@ async def send_telegram_notification(chat_id, message):
                 text=message,
                 parse_mode='Markdown'
             )
-            logger.info(f"? �� g?i th�ng b�o Telegram cho user {chat_id}")
+            logger.info(f"✅ Đã gửi thông báo Telegram cho user {chat_id}")
     except Exception as e:
-        logger.error(f"? L?i g?i Telegram: {e}")
+        logger.error(f"❌ Lỗi gửi Telegram: {e}")
 
 def setup_sepay_webhook(app):
     @app.route('/webhook/sepay', methods=['POST'])
@@ -37,8 +35,8 @@ def setup_sepay_webhook(app):
         try:
             data = request.json
             logger.info("="*60)
-            logger.info("?? NH?N WEBHOOK T? SEPAY")
-            logger.info(f"D? li?u: {data}")
+            logger.info("📩 NHẬN WEBHOOK TỪ SEPAY")
+            logger.info(f"Dữ liệu: {data}")
             
             transfer_type = data.get('transferType')
             account_number = data.get('accountNumber')
@@ -52,66 +50,63 @@ def setup_sepay_webhook(app):
             if account_number != MB_ACCOUNT:
                 return jsonify({"success": True, "message": "Wrong account"}), 200
             
-            # T�m m� NAP
+            # Tìm mã NAP
             match = re.search(r'NAP\s*([A-Z0-9]{8})', content.upper())
             if not match:
                 return jsonify({"success": True, "message": "No NAP code found"}), 200
             
             transaction_code = match.group(1)
-            logger.info(f"? M� NAP: {transaction_code}")
+            logger.info(f"🔍 Mã NAP: {transaction_code}")
             
             with app.app_context():
-                # BU?C 1: T�m giao d?ch pending v?i m� n�y
+                # BƯỚC 1: Tìm giao dịch pending với mã này
                 transaction = Transaction.query.filter_by(
                     transaction_code=transaction_code,
                     status='pending'
                 ).first()
                 
-                # BU?C 2: X�C �?NH USER - T�M THEO NHI?U C�CH
+                # BƯỚC 2: XÁC ĐỊNH USER - TÌM THEO NHIỀU CÁCH
                 target_user = None
                 
-                # C�CH 1: T? giao d?ch pending (QUAN TR?NG NH?T)
+                # CÁCH 1: Từ giao dịch pending (QUAN TRỌNG NHẤT)
                 if transaction:
                     target_user = User.query.get(transaction.user_id)
-                    logger.info(f"? C�ch 1: T�m th?y user t? giao d?ch pending: {target_user.user_id if target_user else 'None'}")
+                    logger.info(f"✅ Cách 1: Tìm thấy user từ giao dịch pending: {target_user.user_id if target_user else 'None'}")
                 
-                # C�CH 2: T�m user_id trong n?i dung
+                # CÁCH 2: Tìm user_id trong nội dung
                 if not target_user:
                     user_match = re.search(r'tu (\d+)', content)
                     if user_match:
                         found_user_id = int(user_match.group(1))
                         target_user = User.query.filter_by(user_id=found_user_id).first()
                         if target_user:
-                            logger.info(f"? C�ch 2: T�m th?y user t? n?i dung: {target_user.user_id}")
+                            logger.info(f"✅ Cách 2: Tìm thấy user từ nội dung: {target_user.user_id}")
                 
-                # C�CH 3: T�m user t? giao d?ch cu (QUAN TR?NG CHO USER M?I)
+                # CÁCH 3: Tìm user từ giao dịch cũ
                 if not target_user:
                     any_trans = Transaction.query.filter_by(
                         transaction_code=transaction_code
                     ).first()
                     if any_trans:
                         target_user = User.query.get(any_trans.user_id)
-                        logger.info(f"? C�ch 3: T�m th?y user t? giao d?ch cu: {target_user.user_id if target_user else 'None'}")
+                        logger.info(f"✅ Cách 3: Tìm thấy user từ giao dịch cũ: {target_user.user_id if target_user else 'None'}")
                 
-                # C�CH 4: T�m user t? s? di?n tho?i trong n?i dung
+                # CÁCH 4: Tìm user từ số điện thoại trong nội dung
                 if not target_user:
                     numbers = re.findall(r'\d+', content)
                     for num in numbers:
-                        if len(num) >= 9:  # User ID thu?ng c� 10 s?
+                        if len(num) >= 9:
                             try:
                                 potential_user = User.query.filter_by(user_id=int(num)).first()
                                 if potential_user:
                                     target_user = potential_user
-                                    logger.info(f"? C�ch 4: T�m th?y user t? s? {num}: {target_user.user_id}")
+                                    logger.info(f"✅ Cách 4: Tìm thấy user từ số {num}: {target_user.user_id}")
                                     break
                             except:
                                 pass
                 
-                # N?U V?N KH�NG T�M TH?Y, T?O USER M?I T? M� GD
+                # NẾU VẪN KHÔNG TÌM THẤY, TẠO USER MỚI TỪ MÃ GD
                 if not target_user:
-                    # T?o user m?i t? m� giao d?ch
-                    import hashlib
-from bot import app
                     hash_obj = hashlib.md5(transaction_code.encode())
                     new_user_id = int(hash_obj.hexdigest()[:8], 16) % 1000000000
                     
@@ -124,11 +119,10 @@ from bot import app
                     )
                     db.session.add(target_user)
                     db.session.flush()
-                    logger.info(f"?? C�ch 5: T?O USER M?I T? M� GD: {target_user.user_id}")
+                    logger.info(f"🆕 Cách 5: TẠO USER MỚI TỪ MÃ GD: {target_user.user_id}")
                 
-                # BU?C 3: X? L� GIAO D?CH
+                # BƯỚC 3: XỬ LÝ GIAO DỊCH
                 if not transaction:
-                    # T?o giao d?ch m?i cho user d� t�m th?y
                     transaction = Transaction(
                         user_id=target_user.id,
                         amount=amount,
@@ -140,14 +134,14 @@ from bot import app
                     )
                     db.session.add(transaction)
                     db.session.flush()
-                    logger.info(f"? �� T?O GIAO D?CH M?I: {transaction_code} cho user {target_user.user_id}")
+                    logger.info(f"✅ ĐÃ TẠO GIAO DỊCH MỚI: {transaction_code} cho user {target_user.user_id}")
                 
-                # KI?M TRA S? TI?N
+                # KIỂM TRA SỐ TIỀN
                 if abs(transaction.amount - amount) > 5000:
-                    logger.error(f"? S? ti?n kh�ng kh?p: {amount} != {transaction.amount}")
+                    logger.error(f"❌ Số tiền không khớp: {amount} != {transaction.amount}")
                     return jsonify({"success": True, "message": "Amount mismatch"}), 200
                 
-                # C?NG TI?N
+                # CỘNG TIỀN
                 old_balance = target_user.balance
                 target_user.balance += transaction.amount
                 transaction.status = 'success'
@@ -155,23 +149,23 @@ from bot import app
                 
                 db.session.commit()
                 
-                logger.info("? N?P TI?N TH�NH C�NG!")
-                logger.info(f"?? User: {target_user.user_id} - {target_user.username}")
-                logger.info(f"?? S? du: {old_balance}d ? {target_user.balance}d")
-                logger.info(f"?? M� GD: {transaction_code}")
+                logger.info("✅ NẠP TIỀN THÀNH CÔNG!")
+                logger.info(f"👤 User: {target_user.user_id} - {target_user.username}")
+                logger.info(f"💰 Số dư: {old_balance:,}đ → {target_user.balance:,}đ")
+                logger.info(f"📝 Mã GD: {transaction_code}")
                 
-                # G?i th�ng b�o Telegram
+                # Gửi thông báo Telegram
                 if BOT_TOKEN:
                     try:
                         message = (
-                            f"?? **N?P TI?N TH�NH C�NG!**\n\n"
-                            f"� **S? ti?n:** `{transaction.amount:,}d`\n"
-                            f"� **M� GD:** `{transaction_code}`\n"
-                            f"� **S? du m?i:** `{target_user.balance:,}d`"
+                            f"💰 **NẠP TIỀN THÀNH CÔNG!**\n\n"
+                            f"• **Số tiền:** `{transaction.amount:,}đ`\n"
+                            f"• **Mã GD:** `{transaction_code}`\n"
+                            f"• **Số dư mới:** `{target_user.balance:,}đ`"
                         )
                         asyncio.run(send_telegram_notification(target_user.user_id, message))
                     except Exception as e:
-                        logger.error(f"L?i g?i Telegram: {e}")
+                        logger.error(f"❌ Lỗi gửi Telegram: {e}")
                 
                 return jsonify({
                     "success": True,
@@ -185,5 +179,5 @@ from bot import app
                 }), 200
             
         except Exception as e:
-            logger.error(f"? L?I WEBHOOK: {e}")
+            logger.error(f"❌ LỖI WEBHOOK: {e}")
             return jsonify({"success": False, "error": str(e)}), 500

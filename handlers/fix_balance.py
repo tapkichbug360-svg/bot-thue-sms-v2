@@ -1,8 +1,7 @@
-import sqlite3
+﻿import sqlite3
 import requests
 from bot import app
 from datetime import datetime
-from bot import app
 
 RENDER_URL = "https://bot-thue-sms-v2.onrender.com"
 
@@ -36,7 +35,7 @@ def fix_user_balance(user_id):
     conn = sqlite3.connect('database/bot.db')
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id, balance FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT id, balance FROM users WHERE user_id = %s", (user_id,))
     local_user = cursor.fetchone()
     
     if not local_user:
@@ -50,7 +49,7 @@ def fix_user_balance(user_id):
     # 3. Tính toán số dư đúng từ transactions
     cursor.execute("""
         SELECT SUM(amount) FROM transactions 
-        WHERE user_id = ? AND status = 'success'
+        WHERE user_id = %s AND status = 'success'
     """, (local_user[0],))
     total_success = cursor.fetchone()[0] or 0
     
@@ -68,14 +67,14 @@ def fix_user_balance(user_id):
     choice = input("Chọn (1-4): ").strip()
     
     if choice == "1":
-        cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (render_balance, user_id))
+        cursor.execute("UPDATE users SET balance = %s WHERE user_id = %s", (render_balance, user_id))
         print(f"✅ Đã cập nhật local balance = {render_balance:,}đ")
     elif choice == "3":
-        cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (total_success, user_id))
+        cursor.execute("UPDATE users SET balance = %s WHERE user_id = %s", (total_success, user_id))
         print(f"✅ Đã cập nhật local balance = {total_success:,}đ")
     elif choice == "4":
         # Push user lên Render
-        cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT username FROM users WHERE user_id = %s", (user_id,))
         username = cursor.fetchone()[0]
         
         push_response = requests.post(
@@ -88,7 +87,7 @@ def fix_user_balance(user_id):
         # Push transactions
         cursor.execute("""
             SELECT transaction_code, amount FROM transactions 
-            WHERE user_id = ? AND status = 'pending'
+            WHERE user_id = %s AND status = 'pending'
         """, (local_user[0],))
         pending = cursor.fetchall()
         

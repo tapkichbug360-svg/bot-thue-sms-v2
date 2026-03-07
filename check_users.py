@@ -1,4 +1,4 @@
-import sqlite3
+﻿import sqlite3
 import os
 from datetime import datetime
 
@@ -34,11 +34,11 @@ def fix_user_balance(user_id, amount):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
+        cursor.execute('SELECT balance FROM users WHERE user_id = %s', (user_id,))
         old = cursor.fetchone()
         old_balance = old[0] if old else 0
         
-        cursor.execute('UPDATE users SET balance = ? WHERE user_id = ?', (amount, user_id))
+        cursor.execute('UPDATE users SET balance = %s WHERE user_id = %s', (amount, user_id))
         conn.commit()
         conn.close()
         
@@ -55,7 +55,7 @@ def delete_fake_user(user_id):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
+        cursor.execute('DELETE FROM users WHERE user_id = %s', (user_id,))
         conn.commit()
         conn.close()
         

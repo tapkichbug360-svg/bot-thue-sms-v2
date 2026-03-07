@@ -1,26 +1,21 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+﻿from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from bot import app
 from telegram.ext import CallbackContext as Context
-from bot import app
 from database.models import User, db
-from bot import app
 from datetime import datetime
 import logging
-from bot import app
 
 logger = logging.getLogger(__name__)
 
 async def balance_command(update: Update, context: Context):
-    """Xem s? du t�i kho?n - FIX L?I MARKDOWN"""
+    """Xem số dư tài khoản - FIX LỖI MARKDOWN"""
     user = update.effective_user
     
-    from main import app
-from bot import app
     with app.app_context():
         db_user = User.query.filter_by(user_id=user.id).first()
         
         if not db_user:
-            text = "? KH�NG T�M TH?Y T�I KHO?N\n\nVui l�ng g?i /start d? dang k�."
+            text = "❌ KHÔNG TÌM THẤY TÀI KHOẢN\n\nVui lòng gửi /start để đăng ký."
             if update.callback_query:
                 await update.callback_query.edit_message_text(text)
             else:
@@ -31,22 +26,22 @@ from bot import app
         total_spent = db_user.total_spent
         total_rentals = db_user.total_rentals
         
-        # S?A �?NH D?NG - B? ** kh�ng c?n thi?t
+        # SỬA ĐỊNH DẠNG - Bỏ ** không cần thiết
         text = (
-            f"?? S? DU T�I KHO?N\n\n"
-            f"� User ID: {user.id}\n"
-            f"� T�n: {user.first_name}\n"
-            f"� Username: @{user.username or 'N/A'}\n\n"
-            f"?? S? du hi?n t?i: {balance:,}d\n"
-            f"?? �� thu�: {total_rentals} s?\n"
-            f"?? T?ng chi: {total_spent:,}d\n\n"
-            f"?? Ch?n thao t�c:"
+            f"💰 SỐ DƯ TÀI KHOẢN\n\n"
+            f"• User ID: {user.id}\n"
+            f"• Tên: {user.first_name}\n"
+            f"• Username: @{user.username or 'N/A'}\n\n"
+            f"💵 Số dư hiện tại: {balance:,}đ\n"
+            f"📊 Đã thuê: {total_rentals} số\n"
+            f"💸 Tổng chi: {total_spent:,}đ\n\n"
+            f"🔽 Chọn thao tác:"
         )
         
         keyboard = [
-            [InlineKeyboardButton("?? N?p ti?n", callback_data="menu_deposit")],
-            [InlineKeyboardButton("?? Thu� s?", callback_data="menu_rent")],
-            [InlineKeyboardButton("?? Menu ch�nh", callback_data="menu_main")]
+            [InlineKeyboardButton("💳 Nạp tiền", callback_data="menu_deposit")],
+            [InlineKeyboardButton("📱 Thuê số", callback_data="menu_rent")],
+            [InlineKeyboardButton("🔙 Menu chính", callback_data="menu_main")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
