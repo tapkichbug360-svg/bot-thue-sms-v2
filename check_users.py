@@ -1,98 +1,106 @@
 import sqlite3
 import os
+from datetime import datetime
 
-def check_all_users():
-    """Kiểm tra tất cả user trong database"""
+def get_all_users():
+    """Lấy danh sách tất cả user"""
     try:
         db_path = os.path.join('database', 'bot.db')
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Lấy danh sách user
-        cursor.execute('SELECT user_id, username, balance FROM users ORDER BY user_id')
+        cursor.execute('''
+            SELECT u.user_id, u.username, u.balance, 
+                   COUNT(t.id) as total_trans,
+                   SUM(CASE WHEN t.status = 'success' THEN t.amount ELSE 0 END) as total_deposit
+            FROM users u
+            LEFT JOIN transactions t ON u.id = t.user_id
+            GROUP BY u.id
+            ORDER BY u.user_id
+        ''')
+        
         users = cursor.fetchall()
-        
-        print("\n📋 DANH SÁCH TẤT CẢ USER")
-        print("="*70)
-        print(f"{'User ID':<15} {'Username':<20} {'Balance':>15}")
-        print("-"*70)
-        
-        for uid, uname, bal in users:
-            print(f"{uid:<15} @{uname:<19} {bal:>15,}đ")
-        
-        # Thống kê
-        cursor.execute('SELECT COUNT(*) FROM users')
-        total_users = cursor.fetchone()[0]
-        
-        cursor.execute('SELECT SUM(balance) FROM users')
-        total_balance = cursor.fetchone()[0] or 0
-        
-        print("="*70)
-        print(f"📊 Tổng số user: {total_users}")
-        print(f"💰 Tổng số dư: {total_balance:,}đ")
-        
-        # Kiểm tra giao dịch
-        cursor.execute('SELECT COUNT(*) FROM transactions WHERE status = "pending"')
-        pending = cursor.fetchone()[0]
-        
-        cursor.execute('SELECT COUNT(*) FROM transactions WHERE status = "success"')
-        success = cursor.fetchone()[0]
-        
-        print(f"📊 Giao dịch pending: {pending}")
-        print(f"✅ Giao dịch success: {success}")
-        
         conn.close()
         
+        return users
     except Exception as e:
         print(f"❌ Lỗi: {e}")
+        return []
 
-def fix_user_6831611266():
-    """Fix user mới bị lỗi"""
+def fix_user_balance(user_id, amount):
+    """Sửa số dư user thủ công"""
     try:
         db_path = os.path.join('database', 'bot.db')
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Kiểm tra user 6831611266
-        cursor.execute('SELECT * FROM users WHERE user_id = 6831611266')
-        user = cursor.fetchone()
+        cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
+        old = cursor.fetchone()
+        old_balance = old[0] if old else 0
         
-        if not user:
-            print("❌ Không tìm thấy user 6831611266")
-            conn.close()
-            return
-        
-        print(f"📊 User 6831611266 hiện tại:")
-        print(f"  ID: {user[0]}")
-        print(f"  User ID: {user[1]}")
-        print(f"  Username: {user[2]}")
-        print(f"  Balance: {user[3]}đ")
-        
-        # Cập nhật số dư lên 20,000đ
-        cursor.execute('UPDATE users SET balance = 20000 WHERE user_id = 6831611266')
+        cursor.execute('UPDATE users SET balance = ? WHERE user_id = ?', (amount, user_id))
         conn.commit()
-        
-        print("✅ Đã cập nhật số dư user 6831611266 lên 20,000đ")
         conn.close()
         
+        print(f"✅ Đã sửa user {user_id}: {old_balance}đ → {amount}đ")
+        return True
     except Exception as e:
         print(f"❌ Lỗi: {e}")
+        return False
 
-if __name__ == "__main__":
-    print("="*70)
-    print("🔍 KIỂM TRA DATABASE USER")
-    print("="*70)
-    print("1. Xem tất cả user")
-    print("2. Fix user 6831611266")
+def delete_fake_user(user_id):
+    """Xóa user ảo (nếu có)"""
+    try:
+        db_path = os.path.join('database', 'bot.db')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Đã xóa user ảo {user_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Lỗi: {e}")
+        return False
+
+def main():
+    print("="*80)
+    print("🔍 QUẢN LÝ USER - HỆ THỐNG THUÊ SMS")
+    print("="*80)
+    
+    users = get_all_users()
+    
+    if not users:
+        print("❌ Không có user nào trong database")
+        return
+    
+    print(f"\n📋 DANH SÁCH {len(users)} USER:")
+    print("-"*80)
+    print(f"{'User ID':<15} {'Username':<20} {'Balance':>12} {'Giao dịch':>10} {'Tổng nạp':>12}")
+    print("-"*80)
+    
+    for uid, uname, bal, total_trans, total_deposit in users:
+        print(f"{uid:<15} @{uname:<19} {bal:>12,}đ {total_trans:>10} {total_deposit:>12,}đ")
+    
+    print("="*80)
+    print("1. Sửa số dư user")
+    print("2. Xóa user ảo")
     print("3. Thoát")
-    print("="*70)
+    print("="*80)
     
     choice = input("Chọn: ").strip()
     
     if choice == "1":
-        check_all_users()
+        uid = int(input("Nhập user_id: "))
+        amount = int(input("Nhập số dư mới: "))
+        fix_user_balance(uid, amount)
     elif choice == "2":
-        fix_user_6831611266()
-        check_all_users()
+        uid = int(input("Nhập user_id ảo cần xóa: "))
+        delete_fake_user(uid)
     else:
         print("👋 Tạm biệt!")
+
+if __name__ == "__main__":
+    main()
