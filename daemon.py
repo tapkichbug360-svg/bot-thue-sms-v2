@@ -27,8 +27,31 @@ class UserSyncDaemon:
             print(f"❌ Lỗi lấy danh sách user: {e}")
             return []
     
+    def push_user_to_render(self, user_id, username):
+        """ĐẨY user mới lên Render"""
+        try:
+            response = requests.post(
+                f"{RENDER_URL}/api/check-user",
+                json={'user_id': user_id, 'username': username},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('exists'):
+                    print(f"  ✅ User {user_id} đã tồn tại trên Render")
+                else:
+                    print(f"  ✅ User {user_id} đã được tạo trên Render")
+                return True
+            else:
+                print(f"  ❌ User {user_id}: Lỗi {response.status_code}")
+                return False
+        except Exception as e:
+            print(f"  ❌ User {user_id}: {e}")
+            return False
+    
     def sync_single_user(self, user_id):
-        """Đồng bộ một user với Render"""
+        """Đồng bộ một user (lấy dữ liệu từ Render về)"""
         try:
             response = requests.post(
                 f"{RENDER_URL}/api/force-sync-user",
@@ -65,16 +88,29 @@ class UserSyncDaemon:
                 conn.close()
                 return True
             elif response.status_code == 404:
-                print(f"  ⚠️ User {user_id} không tồn tại trên Render")
+                # User không tồn tại trên Render -> Cần push lên
+                print(f"  ⚠️ User {user_id} không tồn tại trên Render, đang push lên...")
+                
+                # Lấy username từ local
+                db_path = os.path.join('database', 'bot.db')
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute('SELECT username FROM users WHERE user_id = ?', (user_id,))
+                result = cursor.fetchone()
+                username = result[0] if result else f"user_{user_id}"
+                conn.close()
+                
+                # Push user lên Render
+                return self.push_user_to_render(user_id, username)
             else:
                 print(f"  ❌ User {user_id}: Lỗi {response.status_code}")
-            return False
+                return False
         except Exception as e:
             print(f"  ❌ User {user_id}: {e}")
             return False
     
     def sync_all_users(self):
-        """Đồng bộ tất cả user"""
+        """Đồng bộ tất cả user (2 chiều)"""
         users = self.get_all_users()
         
         if not users:
@@ -128,7 +164,7 @@ class UserSyncDaemon:
     def run_daemon(self):
         """Chạy daemon tự động đồng bộ"""
         print("="*70)
-        print("🚀 DAEMON ĐỒNG BỘ TẤT CẢ USER - CHẠY NỀN")
+        print("🚀 DAEMON ĐỒNG BỘ TẤT CẢ USER - 2 CHIỀU")
         print("⏱️  Đồng bộ mỗi 30 giây")
         print("="*70)
         
@@ -181,16 +217,17 @@ if __name__ == "__main__":
     daemon = UserSyncDaemon()
     
     print("="*70)
-    print("🔄 CÔNG CỤ ĐỒNG BỘ USER - PHÂN LOẠI CHÍNH XÁC")
+    print("🔄 CÔNG CỤ ĐỒNG BỘ USER - 2 CHIỀU")
     print("="*70)
     print("1. Đồng bộ một lần tất cả user")
     print("2. Chạy daemon (tự động mỗi 30 giây)")
     print("3. Theo dõi số dư thời gian thực")
     print("4. Sửa số dư user")
-    print("5. Thoát")
+    print("5. Push user cụ thể lên Render")
+    print("6. Thoát")
     print("="*70)
     
-    choice = input("Chọn chức năng (1-5): ").strip()
+    choice = input("Chọn chức năng (1-6): ").strip()
     
     if choice == "1":
         daemon.sync_all_users()
@@ -202,5 +239,9 @@ if __name__ == "__main__":
         user_id = input("Nhập user_id: ").strip()
         amount = int(input("Nhập số dư mới: ").strip())
         fix_user_balance(int(user_id), amount)
+    elif choice == "5":
+        user_id = input("Nhập user_id cần push: ").strip()
+        username = input("Nhập username: ").strip()
+        daemon.push_user_to_render(int(user_id), username)
     else:
         print("👋 Tạm biệt!")
