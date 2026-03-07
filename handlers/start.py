@@ -1,5 +1,5 @@
 ﻿from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from bot import app
+
 from telegram.ext import CallbackContext as Context
 from database.models import User, db
 from datetime import datetime
@@ -361,3 +361,4 @@ async def balance_command(update: Update, context: Context):
                 reply_markup=reply_markup, 
                 parse_mode='Markdown'
             )
+from bot import app

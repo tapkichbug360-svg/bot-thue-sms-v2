@@ -1,11 +1,13 @@
-﻿__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.env
-database/__pycache__/
-handlers/__pycache__/
+﻿# Backup files
+*.backup
+temp_*.py
+
+# Database
+*.db
 *.db.backup
 *.db.clean
-# Không loại trừ database chính
-# database/bot.db
+*.db.latest
+
+# Cache
+__pycache__/
+*.pyc
