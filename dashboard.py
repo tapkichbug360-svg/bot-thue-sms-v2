@@ -1212,7 +1212,7 @@ def add_money():
         db.session.commit()
         
         logger.info(f"✅ ĐÃ CỘNG {amount}đ THỦ CÔNG CHO USER {user_id} (từ {old_balance}đ lên {user.balance}đ)")
-        flash(f'Đã cộng {amount:,}đ thành công cho user {user_id}', 'success')
+        flash(f'💰 NẠP TIỀN THÀNH CÔNG!\n      • Số tiền: {amount:,}đ\n      • Mã GD: {transaction_code}\n      • Số dư mới: {user.balance:,}đ', 'success')
     
     return redirect(request.referrer or url_for('manual'))
 
@@ -1264,8 +1264,92 @@ def export_users():
             headers={'Content-Disposition': 'attachment;filename=users.csv'}
         )
 
-if __name__ == '__main__':
+
+@dashboard_bp.route('/add_money', methods=['POST'])
+def add_money():
+    """API cộng tiền thủ công - ĐÃ FIX ĐẦY ĐỦ"""
+    user_id = request.form.get('user_id', type=int)
+    amount = request.form.get('amount', type=int)
+    reason = request.form.get('reason', 'Cộng tiền thủ công')
+    
+    if not user_id or not amount or amount < 1000:
+        flash('Vui lòng nhập đủ thông tin và số tiền phải >= 1000đ', 'danger')
+        return redirect(request.referrer or url_for('dashboard.manual'))
+    
+    with app.app_context():
+        user = User.query.filter_by(user_id=user_id).first()
+        if not user:
+            flash(f'Không tìm thấy user có ID {user_id}', 'danger')
+            return redirect(request.referrer or url_for('dashboard.manual'))
+        
+        # Lưu số dư cũ
+        old_balance = user.balance
+        
+        # CỘNG TIỀN
+        user.balance += amount
+        
+        # Tạo transaction code
+        transaction_code = f"MANUAL_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        # Tạo transaction
+        transaction = Transaction(
+            user_id=user.id,
+            amount=amount,
+            type='deposit',
+            status='success',
+            transaction_code=transaction_code,
+            description=reason,
+            created_at=datetime.now()
+        )
+        
+        db.session.add(transaction)
+        db.session.commit()
+        
+        # LẤY SỐ DƯ MỚI NHẤT
+        db.session.refresh(user)
+        
+        # ĐỒNG BỘ LÊN RENDER
+        try:
+            import requests
+            RENDER_URL = "https://bot-thue-sms-v2.onrender.com"
+            
+            # Push user
+            requests.post(
+                f"{RENDER_URL}/api/check-user",
+                json={'user_id': user.user_id, 'username': user.username},
+                timeout=3
+            )
+            
+            # Push transaction
+            requests.post(
+                f"{RENDER_URL}/api/sync-pending",
+                json={'transactions': [{
+                    'code': transaction_code,
+                    'amount': amount,
+                    'user_id': user.user_id,
+                    'username': user.username
+                }]},
+                timeout=3
+            )
+        except Exception as e:
+            logger.error(f"⚠️ Không thể push lên Render: {e}")
+        
+        logger.info(f"✅ ĐÃ CỘNG {amount}đ CHO USER {user_id}")
+        logger.info(f"   Số dư: {old_balance}đ → {user.balance}đ")
+        
+        # FLASH MESSAGE VỚI SỐ DƯ MỚI
+        flash(f'💰 NẠP TIỀN THÀNH CÔNG!\n'
+              f'• Số tiền: {amount:,}đ\n'
+              f'• Mã GD: {transaction_code}\n'
+              f'• Số dư mới: {user.balance:,}đ', 'success')
+    
+    return redirect(url_for('dashboard.manual'))
+
+
     app.run(host='0.0.0.0', port=5000, debug=True)
+
+
+
 
 
 

@@ -1,13 +1,36 @@
-﻿# Backup files
-*.backup
-temp_*.py
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dll
+*.exe
 
 # Database
 *.db
 *.db.backup
 *.db.clean
 *.db.latest
+database/*.db
 
-# Cache
-__pycache__/
-*.pyc
+# Backup files
+*.backup
+temp_*.py
+*.bak
+
+# Environment
+.env
+.venv
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
