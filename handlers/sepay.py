@@ -57,36 +57,75 @@ def setup_sepay_webhook(app):
             logger.info(f"✅ Mã NAP: {transaction_code}")
             
             with app.app_context():
-                # Tìm giao dịch pending
+                # BƯỚC 1: Tìm giao dịch pending với mã này
                 transaction = Transaction.query.filter_by(
                     transaction_code=transaction_code,
                     status='pending'
                 ).first()
                 
-                # NẾU KHÔNG TÌM THẤY - TỰ ĐỘNG TẠO MỚI
+                # BƯỚC 2: XÁC ĐỊNH USER CHÍNH XÁC
+                target_user = None
+                
+                if transaction:
+                    # Nếu có giao dịch pending, lấy user từ giao dịch đó
+                    target_user = User.query.get(transaction.user_id)
+                    logger.info(f"🔍 Tìm thấy giao dịch pending, user: {target_user.user_id if target_user else 'None'}")
+                else:
+                    # KHÔNG CÓ GIAO DỊCH PENDING - Cần tìm user từ nội dung
+                    logger.info(f"🔍 Không tìm thấy giao dịch pending, tìm user từ nội dung...")
+                    
+                    # Cách 1: Tìm user_id trong nội dung (nếu có)
+                    user_match = re.search(r'tu (\d+)', content)
+                    if user_match:
+                        found_user_id = int(user_match.group(1))
+                        target_user = User.query.filter_by(user_id=found_user_id).first()
+                        if target_user:
+                            logger.info(f"✅ Tìm thấy user từ nội dung: {target_user.user_id}")
+                    
+                    # Cách 2: Tìm user có giao dịch pending gần nhất với mã này
+                    if not target_user:
+                        # Tìm bất kỳ giao dịch nào có mã này (kể cả đã success)
+                        any_trans = Transaction.query.filter_by(
+                            transaction_code=transaction_code
+                        ).first()
+                        
+                        if any_trans:
+                            target_user = User.query.get(any_trans.user_id)
+                            logger.info(f"✅ Tìm thấy user từ giao dịch cũ: {target_user.user_id if target_user else 'None'}")
+                    
+                    # Cách 3: Tìm user mới nhất có username chứa một phần của nội dung
+                    if not target_user:
+                        # Tìm user có username khớp với nội dung
+                        all_users = User.query.all()
+                        for u in all_users:
+                            if u.username and u.username in content:
+                                target_user = u
+                                logger.info(f"✅ Tìm thấy user từ username: {target_user.user_id}")
+                                break
+                
+                # NẾU VẪN KHÔNG TÌM THẤY USER, TẠO USER MỚI
+                if not target_user:
+                    # Tạo user mới với ID ngẫu nhiên từ transaction_code
+                    import hashlib
+                    hash_obj = hashlib.md5(transaction_code.encode())
+                    new_user_id = int(hash_obj.hexdigest()[:8], 16) % 1000000000
+                    
+                    target_user = User(
+                        user_id=new_user_id,
+                        username=f"user_{transaction_code[:4]}",
+                        balance=0,
+                        created_at=datetime.now(),
+                        last_active=datetime.now()
+                    )
+                    db.session.add(target_user)
+                    db.session.flush()
+                    logger.info(f"🆕 TẠO USER MỚI TỪ WEBHOOK: {target_user.user_id}")
+                
+                # BƯỚC 3: XỬ LÝ GIAO DỊCH
                 if not transaction:
-                    logger.error(f"❌ Không tìm thấy giao dịch pending: {transaction_code}")
-                    logger.info(f"🔄 TỰ ĐỘNG TẠO GIAO DỊCH MỚI...")
-                    
-                    # Tìm user (ưu tiên user 5180190297)
-                    user = User.query.filter_by(user_id=5180190297).first()
-                    
-                    # Nếu không có, tạo user mới
-                    if not user:
-                        user = User(
-                            user_id=5180190297,
-                            username="makkllai",
-                            balance=0,
-                            created_at=datetime.now(),
-                            last_active=datetime.now()
-                        )
-                        db.session.add(user)
-                        db.session.flush()
-                        logger.info(f"🆕 Đã tạo user mới: {user.user_id}")
-                    
-                    # Tạo giao dịch pending mới
-                    new_trans = Transaction(
-                        user_id=user.id,
+                    # Tạo giao dịch mới
+                    transaction = Transaction(
+                        user_id=target_user.id,
                         amount=amount,
                         type='deposit',
                         status='pending',
@@ -94,12 +133,9 @@ def setup_sepay_webhook(app):
                         description=f"Auto-created from webhook",
                         created_at=datetime.now()
                     )
-                    db.session.add(new_trans)
-                    db.session.commit()
-                    logger.info(f"✅ ĐÃ TẠO GIAO DỊCH MỚI: {transaction_code}")
-                    
-                    # Gán lại transaction để xử lý tiếp
-                    transaction = new_trans
+                    db.session.add(transaction)
+                    db.session.flush()
+                    logger.info(f"✅ ĐÃ TẠO GIAO DỊCH MỚI: {transaction_code} cho user {target_user.user_id}")
                 
                 # KIỂM TRA SỐ TIỀN
                 if abs(transaction.amount - amount) > 5000:
@@ -107,20 +143,17 @@ def setup_sepay_webhook(app):
                     return jsonify({"success": True, "message": "Amount mismatch"}), 200
                 
                 # CỘNG TIỀN
-                user = User.query.get(transaction.user_id)
-                if not user:
-                    logger.error(f"❌ Không tìm thấy user ID: {transaction.user_id}")
-                    return jsonify({"success": True, "message": "User not found"}), 200
-                
-                old_balance = user.balance
-                user.balance += transaction.amount
+                old_balance = target_user.balance
+                target_user.balance += transaction.amount
                 transaction.status = 'success'
                 transaction.updated_at = datetime.now()
                 
                 db.session.commit()
                 
                 logger.info("✅ NẠP TIỀN THÀNH CÔNG!")
-                logger.info(f"User: {user.user_id} - {old_balance}đ → {user.balance}đ")
+                logger.info(f"👤 User: {target_user.user_id} - {target_user.username}")
+                logger.info(f"💰 Số dư: {old_balance}đ → {target_user.balance}đ")
+                logger.info(f"💳 Mã GD: {transaction_code}")
                 
                 # Gửi thông báo Telegram
                 if BOT_TOKEN:
@@ -129,10 +162,9 @@ def setup_sepay_webhook(app):
                             f"💰 **NẠP TIỀN THÀNH CÔNG!**\n\n"
                             f"• **Số tiền:** `{transaction.amount:,}đ`\n"
                             f"• **Mã GD:** `{transaction_code}`\n"
-                            f"• **Số dư mới:** `{user.balance:,}đ`\n"
-                            f"• **Thời gian:** `{datetime.now().strftime('%H:%M:%S %d/%m/%Y')}`"
+                            f"• **Số dư mới:** `{target_user.balance:,}đ`"
                         )
-                        asyncio.run(send_telegram_notification(user.user_id, message))
+                        asyncio.run(send_telegram_notification(target_user.user_id, message))
                     except Exception as e:
                         logger.error(f"Lỗi gửi Telegram: {e}")
                 
@@ -140,9 +172,9 @@ def setup_sepay_webhook(app):
                     "success": True,
                     "message": "Deposit processed successfully",
                     "data": {
-                        "user_id": user.user_id,
+                        "user_id": target_user.user_id,
                         "amount": transaction.amount,
-                        "new_balance": user.balance,
+                        "new_balance": target_user.balance,
                         "transaction_code": transaction_code
                     }
                 }), 200
