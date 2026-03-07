@@ -98,6 +98,43 @@ def home():
 last_check_time = datetime.now() - timedelta(minutes=1)
 processed_transactions = set()
 user_cache = {}
+# ===== HÀM KIỂM TRA SỐ HẾT HẠN =====
+def check_expired_rentals():
+    """Kiểm tra và tự động hoàn tiền cho các số hết hạn"""
+    with app.app_context():
+        try:
+            expired_rentals = Rental.query.filter(
+                Rental.status == 'waiting',
+                Rental.expires_at < datetime.now()
+            ).all()
+
+            for rental in expired_rentals:
+                user = get_or_create_user(rental.user_id)
+                if user:
+                    refund = rental.price_charged
+                    old_balance = user.balance
+                    user.balance += refund
+                    rental.status = 'expired'
+                    rental.updated_at = datetime.now()
+                    db.session.commit()
+
+                    logger.info(f"💰 TỰ ĐỘNG HOÀN {refund}đ CHO USER {user.user_id}")
+                    
+                    if os.getenv('BOT_TOKEN'):
+                        try:
+                            bot = Bot(token=os.getenv('BOT_TOKEN'))
+                            message = (
+                                f"⏰ **SỐ HẾT HẠN & HOÀN TIỀN**\n\n"
+                                f"• **Số:** `{rental.phone_number}`\n"
+                                f"• **Dịch vụ:** {rental.service_name}\n"
+                                f"• **Tiền hoàn:** `{refund:,}đ`\n"
+                                f"• **Số dư mới:** `{user.balance:,}đ`"
+                            )
+                            asyncio.run(send_telegram_message(user.user_id, message))
+                        except Exception as e:
+                            logger.error(f"Lỗi gửi Telegram: {e}")
+        except Exception as e:
+            logger.error(f"Lỗi kiểm tra số hết hạn: {e}")
 
 # ===== HÀM GET_OR_CREATE_USER =====
 def get_or_create_user(user_id, username=None):
