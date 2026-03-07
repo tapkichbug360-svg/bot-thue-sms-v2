@@ -872,32 +872,26 @@ def manual():
 
 @app.route('/add_money', methods=['POST'])
 def add_money():
-    """API cộng tiền thủ công - ĐÃ FIX ĐẦY ĐỦ"""
+    """API cộng tiền thủ công - CÓ GỬI TELEGRAM"""
     user_id = request.form.get('user_id', type=int)
     amount = request.form.get('amount', type=int)
     reason = request.form.get('reason', 'Cộng tiền thủ công')
     
     if not user_id or not amount or amount < 1000:
-        flash('Vui lòng nhập đủ thông tin và số tiền phải >= 1000đ', 'danger')
+        flash('Vui lòng nhập đủ thông tin', 'danger')
         return redirect(url_for('manual'))
     
     with app.app_context():
-        # Tìm user
         user = User.query.filter_by(user_id=user_id).first()
         if not user:
-            flash(f'Không tìm thấy user có ID {user_id}', 'danger')
+            flash(f'Không tìm thấy user {user_id}', 'danger')
             return redirect(url_for('manual'))
         
-        # Lưu số dư cũ
         old_balance = user.balance
-        
-        # CỘNG TIỀN - QUAN TRỌNG NHẤT!
         user.balance += amount
         
-        # Tạo transaction code
         transaction_code = f"MANUAL_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
-        # Tạo transaction
         transaction = Transaction(
             user_id=user.id,
             amount=amount,
@@ -910,49 +904,37 @@ def add_money():
         
         db.session.add(transaction)
         db.session.commit()
-        
-        # REFRESH để lấy số dư mới nhất
         db.session.refresh(user)
         
-        # ĐỒNG BỘ LÊN RENDER
+        # === GỬI THÔNG BÁO TELEGRAM ===
         try:
-            RENDER_URL = "https://bot-thue-sms-v2.onrender.com"
-            
-            # Push user lên Render
-            user_response = requests.post(
-                f"{RENDER_URL}/api/check-user",
-                json={'user_id': user.user_id, 'username': user.username},
-                timeout=5
-            )
-            logger.info(f"✅ Push user lên Render: {user_response.status_code}")
-            
-            # Push transaction lên Render
-            trans_response = requests.post(
-                f"{RENDER_URL}/api/sync-pending",
-                json={'transactions': [{
-                    'code': transaction_code,
-                    'amount': amount,
-                    'user_id': user.user_id,
-                    'username': user.username
-                }]},
-                timeout=5
-            )
-            logger.info(f"✅ Push transaction lên Render: {trans_response.status_code}")
-            
+            BOT_TOKEN = os.getenv('BOT_TOKEN')
+            if BOT_TOKEN:
+                telegram_message = (
+                    f"💰 *NẠP TIỀN THÀNH CÔNG!*\n\n"
+                    f"• *Số tiền:* {amount:,}đ\n"
+                    f"• *Mã GD:* {transaction_code}\n"
+                    f"• *Số dư mới:* {user.balance:,}đ\n"
+                    f"• *Thời gian:* {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}"
+                )
+                
+                requests.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                    json={
+                        'chat_id': user.user_id,
+                        'text': telegram_message,
+                        'parse_mode': 'Markdown'
+                    },
+                    timeout=5
+                )
+                logger.info(f"✅ Đã gửi thông báo Telegram cho user {user_id}")
         except Exception as e:
-            logger.error(f"⚠️ Không thể push lên Render: {e}")
-            # Không ảnh hưởng đến giao dịch local
+            logger.error(f"❌ Lỗi gửi Telegram: {e}")
         
-        logger.info(f"✅ ĐÃ CỘNG {amount}đ CHO USER {user_id}")
-        logger.info(f"   Số dư: {old_balance}đ → {user.balance}đ")
-        logger.info(f"   Mã GD: {transaction_code}")
-        
-        # FLASH MESSAGE VỚI SỐ DƯ MỚI
         flash(f'💰 NẠP TIỀN THÀNH CÔNG!\n'
               f'• Số tiền: {amount:,}đ\n'
               f'• Mã GD: {transaction_code}\n'
-              f'• Số dư mới: {user.balance:,}đ\n'
-              f'• Thời gian: {datetime.now().strftime("%H:%M:%S %d/%m/%Y")}', 'success')
+              f'• Số dư mới: {user.balance:,}đ', 'success')
     
     return redirect(url_for('manual'))
 

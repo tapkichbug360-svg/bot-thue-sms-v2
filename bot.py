@@ -9,26 +9,51 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from flask import Flask
 from database.models import db, User, Transaction
 
-# === CÁCH ĐƠN GIẢN NHẤT - ĐỌC TRỰC TIẾP FILE ===
-BOT_TOKEN = None
+# === ĐỌC TRỰC TIẾP TẤT CẢ BIẾN TỪ FILE .ENV ===
+print("📁 Đang đọc file .env...")
 
-# Đọc trực tiếp file .env
+BOT_TOKEN = None
+API_KEY = None
+BASE_URL = None
+
 if os.path.exists('.env'):
     with open('.env', 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
-            if line.startswith('BOT_TOKEN='):
-                BOT_TOKEN = line.split('=')[1].strip()
-                print(f"✅ Đã đọc BOT_TOKEN từ file: {BOT_TOKEN[:10]}...")
-                break
+            if not line or line.startswith('#'):
+                continue
+            if '=' in line:
+                key, value = line.split('=', 1)
+                value = value.strip()
+                os.environ[key] = value
+                if key == 'BOT_TOKEN':
+                    BOT_TOKEN = value
+                    print(f"   ✅ BOT_TOKEN: {value[:10]}...")
+                elif key == 'API_KEY':
+                    API_KEY = value
+                    print(f"   ✅ API_KEY: {value[:10]}...")
+                elif key == 'BASE_URL':
+                    BASE_URL = value
+                    print(f"   ✅ BASE_URL: {value}")
+                elif key == 'ADMIN_ID':
+                    ADMIN_ID = value
+                elif key == 'MB_ACCOUNT':
+                    MB_ACCOUNT = value
+                elif key == 'MB_NAME':
+                    MB_NAME = value
 
+# Kiểm tra các biến quan trọng
 if not BOT_TOKEN:
-    print("❌ KHÔNG TÌM THẤY BOT_TOKEN trong file .env")
-    print("📁 Nội dung file .env:")
-    if os.path.exists('.env'):
-        with open('.env', 'r') as f:
-            print(f.read())
+    print("❌ KHÔNG TÌM THẤY BOT_TOKEN")
     sys.exit(1)
+if not API_KEY:
+    print("❌ KHÔNG TÌM THẤY API_KEY")
+    sys.exit(1)
+if not BASE_URL:
+    print("❌ KHÔNG TÌM THẤY BASE_URL")
+    sys.exit(1)
+
+print("✅ Đã đọc tất cả biến môi trường thành công!")
 
 # Cấu hình logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -45,13 +70,13 @@ logger.info(f"✅ Database path: {db_path}")
 
 # Import handlers
 try:
-    from handlers.start import start_command
+    from handlers.start import start_command, menu_command, cancel, help_command, check_command, history_command, cancel_command
     from handlers.balance import balance_command
     from handlers.deposit import deposit_command, deposit_amount_callback, deposit_check_callback
     from handlers.rent import (
         rent_command, rent_service_callback, rent_network_callback,
         rent_confirm_callback, rent_check_callback, rent_cancel_callback,
-        rent_view_callback
+        rent_view_callback, rent_list_callback, rent_reuse_callback
     )
     from handlers.callback import menu_callback
     logger.info("✅ Import handlers thành công")
@@ -106,12 +131,16 @@ async def main():
             except Exception as e:
                 logger.error(f"❌ Lỗi kết nối database: {e}")
         
-        application = Application.builder().token(BOT_TOKEN).build()
+        application = Application.builder().token(BOT_TOKEN).connect_timeout(30).read_timeout(30).build()
         
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("balance", balance_command))
         application.add_handler(CommandHandler("deposit", deposit_command))
         application.add_handler(CommandHandler("rent", rent_command))
+        application.add_handler(CommandHandler('check', check_command))
+        application.add_handler(CommandHandler('cancel', cancel_command))
+        application.add_handler(CommandHandler('help', help_command))
+        application.add_handler(CommandHandler('history', history_command))
         
         application.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
         application.add_handler(CallbackQueryHandler(deposit_amount_callback, pattern="^deposit_amount_"))
@@ -122,6 +151,7 @@ async def main():
         application.add_handler(CallbackQueryHandler(rent_check_callback, pattern="^rent_check_"))
         application.add_handler(CallbackQueryHandler(rent_cancel_callback, pattern="^rent_cancel_"))
         application.add_handler(CallbackQueryHandler(rent_view_callback, pattern="^rent_view_"))
+        application.add_handler(CallbackQueryHandler(rent_reuse_callback, pattern='^rent_reuse_'))
         
         logger.info("✅ BOT KHỞI ĐỘNG THÀNH CÔNG!")
         
@@ -145,3 +175,81 @@ if __name__ == '__main__':
         logger.info("👋 Bot đã dừng")
     except Exception as e:
         logger.error(f"❌ LỖI: {e}")
+async def set_bot_commands(application):
+    """Thiết lập menu commands cho bot"""
+    commands = [
+        ("start", "🚀 Khởi động bot"),
+        ("rent", "📱 Thuê số nhận OTP"),
+        ("balance", "💰 Xem số dư"),
+        ("deposit", "💳 Nạp tiền"),
+        ("history", "📜 Lịch sử giao dịch"),
+        ("help", "❓ Hướng dẫn sử dụng"),
+        ("cancel", "❌ Hủy thao tác hiện tại"),
+        ("check", "🔍 Kiểm tra giao dịch (kèm mã GD)")
+    ]
+    
+    await application.bot.set_my_commands(commands)
+    logger.info("✅ Đã thiết lập menu commands")
+
+async def main():
+    killed = kill_other_instances()
+    if killed > 0:
+        logger.info(f"Đã kill {killed} instance cũ")
+    cleanup_telegram()
+    
+    try:
+        logger.info("🚀 BOT ĐANG KHỞI ĐỘNG...")
+        
+        with app.app_context():
+            try:
+                user_count = User.query.count()
+                logger.info(f"✅ Kết nối database thành công! Số user: {user_count}")
+            except Exception as e:
+                logger.error(f"❌ Lỗi kết nối database: {e}")
+        
+        # Tạo application
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Thiết lập menu commands
+        await set_bot_commands(application)
+        
+        # COMMAND HANDLERS
+        application.add_handler(CommandHandler("start", start_command))
+        application.add_handler(CommandHandler("balance", balance_command))
+        application.add_handler(CommandHandler("deposit", deposit_command))
+        application.add_handler(CommandHandler("rent", rent_command))
+        application.add_handler(CommandHandler('check', check_command))
+        application.add_handler(CommandHandler('cancel', cancel_command))
+        application.add_handler(CommandHandler('help', help_command))
+        application.add_handler(CommandHandler('history', history_command))
+        
+        # CALLBACK HANDLERS
+        application.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
+        application.add_handler(CallbackQueryHandler(deposit_amount_callback, pattern="^deposit_amount_"))
+        application.add_handler(CallbackQueryHandler(deposit_check_callback, pattern="^deposit_check_"))
+        application.add_handler(CallbackQueryHandler(rent_service_callback, pattern="^rent_service_"))
+        application.add_handler(CallbackQueryHandler(rent_network_callback, pattern="^rent_network_"))
+        application.add_handler(CallbackQueryHandler(rent_confirm_callback, pattern="^rent_confirm_"))
+        application.add_handler(CallbackQueryHandler(rent_check_callback, pattern="^rent_check_"))
+        application.add_handler(CallbackQueryHandler(rent_cancel_callback, pattern="^rent_cancel_"))
+        application.add_handler(CallbackQueryHandler(rent_view_callback, pattern="^rent_view_"))
+        application.add_handler(CallbackQueryHandler(rent_reuse_callback, pattern="^rent_reuse_"))
+        application.add_handler(CallbackQueryHandler(rent_list_callback, pattern="^menu_rent_list"))
+        
+        logger.info("✅ BOT KHỞI ĐỘNG THÀNH CÔNG!")
+        
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        
+        while True:
+            await asyncio.sleep(1)
+            
+    except Exception as e:
+        logger.error(f"❌ LỖI: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+

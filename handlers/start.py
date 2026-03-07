@@ -1,7 +1,7 @@
 ﻿from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 
 from telegram.ext import CallbackContext as Context
-from database.models import User, db
+from database.models import User, Rental, db
 from datetime import datetime
 import logging
 import os
@@ -361,4 +361,63 @@ async def balance_command(update: Update, context: Context):
                 reply_markup=reply_markup, 
                 parse_mode='Markdown'
             )
+
+
+
+async def history_command(update: Update, context: Context):
+    """Xem lịch sử giao dịch"""
+    user = update.effective_user
+    
+    with app.app_context():
+        # Lấy lịch sử thuê số
+        rentals = Rental.query.filter_by(user_id=user.id).order_by(Rental.created_at.desc()).limit(10).all()
+        
+        if not rentals:
+            keyboard = [[InlineKeyboardButton("🔙 QUAY LẠI MENU", callback_data="menu_main")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "📭 **Bạn chưa có giao dịch nào**",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return
+        
+        text = "📜 **LỊCH SỬ GIAO DỊCH**\n\n"
+        for r in rentals:
+            status_icon = {
+                'waiting': '⏳',
+                'success': '✅',
+                'cancelled': '❌',
+                'expired': '⏰'
+            }.get(r.status, '❓')
+            
+            text += f"{status_icon} {r.created_at.strftime('%d/%m %H:%M')} - {r.service_name}\n"
+            text += f"   📞 `{r.phone_number}` - {r.price_charged:,}đ\n"
+            if r.otp_code and r.status == 'success':
+                text += f"   🔑 OTP: `{r.otp_code}`\n"
+            text += "\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 QUAY LẠI MENU", callback_data="menu_main")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+
+async def cancel_command(update: Update, context: Context):
+    """Hủy thao tác hiện tại"""
+    # Xóa user_data
+    context.user_data.clear()
+    
+    keyboard = [[InlineKeyboardButton("🔙 QUAY LẠI MENU", callback_data="menu_main")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "❌ **ĐÃ HỦY THAO TÁC**\n\nBạn có thể bắt đầu lại từ menu.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
+# Import app từ bot - để cuối file tránh circular import
+
+# Import app từ bot - để cuối file tránh circular import
 from bot import app

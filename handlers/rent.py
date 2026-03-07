@@ -865,8 +865,9 @@ async def auto_check_otp_task(bot, chat_id: int, otp_id: str, rental_id: int, us
         parse_mode='Markdown'
     )
 
+
 async def rent_view_callback(update: Update, context: Context):
-    """Xem chi tiết số đã thuê"""
+    """Xem chi tiết số đã thuê - CÓ NÚT THUÊ LẠI"""
     query = update.callback_query
     await query.answer()
     
@@ -915,6 +916,13 @@ async def rent_view_callback(update: Update, context: Context):
             if rental.sim_id:
                 keyboard.append([InlineKeyboardButton("❌ HỦY SỐ", callback_data=f"rent_cancel_{rental.sim_id}_{rental.id}")])
         
+        # === NÚT THUÊ LẠI CHO SỐ ĐÃ THÀNH CÔNG ===
+        elif rental.status == 'success':
+            keyboard.append([InlineKeyboardButton(
+                "🔄 THUÊ LẠI SỐ NÀY", 
+                callback_data=f"rent_reuse_{rental.phone_number}_{rental.service_id}"
+            )])
+        
         if rental.otp_code:
             text += f"🔑 **MÃ OTP:** `{rental.otp_code}`\n"
             if rental.content:
@@ -925,6 +933,132 @@ async def rent_view_callback(update: Update, context: Context):
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def rent_reuse_callback(update: Update, context: Context):
+    """Thuê lại số đã từng thuê thành công"""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        data = query.data.split('_')
+        phone = data[2]
+        service_id = data[3]
+    except Exception as e:
+        logger.error(f"Lỗi parse reuse: {e}")
+        await query.edit_message_text("❌ **LỖI DỮ LIỆU**\n\nVui lòng thử lại.")
+        return
+    
+    user = update.effective_user
+    
+    with app.app_context():
+        db_user = User.query.filter_by(user_id=user.id).first()
+        if not db_user:
+            await query.edit_message_text("❌ **KHÔNG TÌM THẤY TÀI KHOẢN**")
+            return
+        
+        # Kiểm tra số dư (giá mặc định 3000đ)
+        price = 3000
+        if db_user.balance < price:
+            await query.edit_message_text(
+                f"❌ **SỐ DƯ KHÔNG ĐỦ!**\n\n"
+                f"Cần {price}đ, bạn có {db_user.balance}đ",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Gọi API thuê lại số
+        try:
+            url = f"{BASE_URL}/sim/reuse_by_phone_api_key"
+            params = {
+                'api_key': API_KEY,
+                'phone': phone,
+                'service_id': service_id
+            }
+            
+            logger.info(f"🔄 Thuê lại số: phone={phone}, service_id={service_id}")
+            response = requests.get(url, params=params, timeout=15)
+            response_data = response.json()
+            
+            if response_data.get('status') == 200:
+                sim_data = response_data.get('data', {})
+                new_otp_id = sim_data.get('otpId')
+                new_sim_id = sim_data.get('simId')
+                
+                # Trừ tiền
+                old_balance = db_user.balance
+                db_user.balance -= price
+                db_user.total_spent += price
+                db_user.total_rentals += 1
+                
+                # Lấy tên dịch vụ
+                service_name = "Unknown"
+                services = await get_services()
+                for sv in services:
+                    if str(sv['id']) == service_id:
+                        service_name = sv['name']
+                        break
+                
+                # Tạo rental mới
+                rental = Rental(
+                    user_id=user.id,
+                    service_id=int(service_id),
+                    service_name=service_name,
+                    phone_number=phone,
+                    otp_id=new_otp_id,
+                    sim_id=new_sim_id,
+                    cost=price - 1000,
+                    price_charged=price,
+                    status='waiting',
+                    created_at=datetime.now(),
+                    expires_at=datetime.now() + timedelta(minutes=5)
+                )
+                db.session.add(rental)
+                db.session.commit()
+                
+                logger.info(f"✅ Thuê lại số {phone} thành công")
+                
+                keyboard = [
+                    [InlineKeyboardButton(f"📞 {phone}", callback_data=f"rent_view_{rental.id}")],
+                    [InlineKeyboardButton("📋 DANH SÁCH SỐ", callback_data="menu_rent_list")],
+                    [InlineKeyboardButton("🔙 MENU CHÍNH", callback_data="menu_main")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(
+                    f"✅ **THUÊ LẠI SỐ THÀNH CÔNG!**\n\n"
+                    f"📞 **Số:** `{phone}`\n"
+                    f"💰 **Đã thanh toán:** {price}đ\n"
+                    f"💵 **Số dư còn lại:** {db_user.balance}đ",
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
+                
+                # Auto-check OTP
+                asyncio.create_task(
+                    auto_check_otp_task(
+                        context.bot,
+                        chat_id=update.effective_chat.id,
+                        otp_id=new_otp_id,
+                        rental_id=rental.id,
+                        user_id=user.id,
+                        service_name=service_name,
+                        phone=phone
+                    )
+                )
+                
+            else:
+                await query.edit_message_text(
+                    f"❌ **LỖI THUÊ LẠI**\n\n{response_data.get('message', 'Không rõ lỗi')}",
+                    parse_mode='Markdown'
+                )
+                
+        except Exception as e:
+            logger.error(f"Lỗi thuê lại: {e}")
+            await query.edit_message_text(
+                "❌ **LỖI KẾT NỐI**\n\nVui lòng thử lại sau.",
+                parse_mode='Markdown'
+            )
+
 
 async def rent_cancel_callback(update: Update, context: Context):
     """Hủy số - HOÀN TIỀN CHÍNH XÁC"""
@@ -974,7 +1108,7 @@ async def rent_cancel_callback(update: Update, context: Context):
         
         phone = rental.phone_number or "Không xác định"
         service_name = rental.service_name or "Không xác định"
-        refund = rental.price_charged  # Số tiền đã trừ khi thuê
+        refund = rental.price_charged
         
         user = User.query.filter_by(user_id=rental.user_id).first()
         
@@ -1009,25 +1143,20 @@ async def rent_cancel_callback(update: Update, context: Context):
             api_data = response.json()
             api_success = api_data.get('status') == 200
             
-            # Lấy số dư TRƯỚC khi hủy - QUAN TRỌNG: dùng giá trị mới nhất từ DB
-            db.session.refresh(user)  # Refresh để lấy số dư mới nhất
+            db.session.refresh(user)
             before_cancel_balance = user.balance
             
-            # Cập nhật trạng thái
             rental.status = 'cancelled'
             rental.updated_at = datetime.now()
             
-            # HOÀN LẠI ĐÚNG SỐ TIỀN
             user.balance += refund
+            db.session.commit()
             
-            # Refresh lại để lấy số dư sau khi cập nhật
             db.session.refresh(user)
             after_cancel_balance = user.balance
             
             logger.info(f"💰 HOÀN {refund}đ CHO USER {user.user_id}")
             logger.info(f"   Số dư trước hủy: {before_cancel_balance}đ → Sau hủy: {after_cancel_balance}đ (Hoàn: +{refund}đ)")
-            
-            db.session.commit()
             
             keyboard = [
                 [InlineKeyboardButton("🆕 THUÊ TIẾP", callback_data="menu_rent")],
@@ -1057,8 +1186,10 @@ async def rent_cancel_callback(update: Update, context: Context):
                 parse_mode='Markdown'
             )
 
+
+
 async def rent_list_callback(update: Update, context: Context):
-    """Hiển thị danh sách số đang thuê"""
+    """Hiển thị danh sách số đang thuê - CÓ NÚT THUÊ LẠI"""
     query = update.callback_query
     await query.answer()
     
@@ -1076,7 +1207,7 @@ async def rent_list_callback(update: Update, context: Context):
         recent_rentals = Rental.query.filter(
             Rental.user_id == user.id,
             Rental.status == 'success'
-        ).order_by(Rental.created_at.desc()).limit(5).all()
+        ).order_by(Rental.created_at.desc()).limit(10).all()
         
         # Lấy số đã hủy/hết hạn
         old_rentals = Rental.query.filter(
@@ -1085,7 +1216,11 @@ async def rent_list_callback(update: Update, context: Context):
         ).order_by(Rental.created_at.desc()).limit(5).all()
     
     # Xóa menu hiện tại
-    await query.message.delete()
+    if query.message:
+        try:
+            await query.message.delete()
+        except:
+            pass
     
     if not active_rentals and not recent_rentals and not old_rentals:
         keyboard = [[InlineKeyboardButton("📱 THUÊ SỐ NGAY", callback_data="menu_rent")]]
@@ -1117,7 +1252,14 @@ async def rent_list_callback(update: Update, context: Context):
     if recent_rentals:
         text += "✅ **ĐÃ NHẬN OTP GẦN ĐÂY:**\n"
         for rental in recent_rentals:
-            text += f"• `{rental.phone_number}` - {rental.service_name} - OTP: `{rental.otp_code}`\n"
+            text += f"• `{rental.phone_number}` - {rental.service_name} - OTP: `{rental.otp_code or 'Audio'}`\n"
+            # THÊM NÚT THUÊ LẠI NGAY TRONG DANH SÁCH
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"🔄 THUÊ LẠI {rental.phone_number}",
+                    callback_data=f"rent_reuse_{rental.phone_number}_{rental.service_id}"
+                )
+            ])
         text += "\n"
     
     if old_rentals:
@@ -1136,3 +1278,11 @@ async def rent_list_callback(update: Update, context: Context):
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
+
+
+
+
+
+
+
+

@@ -81,7 +81,7 @@ class UserSyncDaemon:
             return False
     
     def pull_user_from_render(self, user_id):
-        """Kéo user từ Render về"""
+        """Kéo user từ Render về - CHỈ CẬP NHẬT KHI RENDER CAO HƠN"""
         try:
             response = requests.post(
                 f"{RENDER_URL}/api/force-sync-user",
@@ -93,28 +93,21 @@ class UserSyncDaemon:
                 data = response.json()
                 render_balance = data['balance']
                 
-                # Cập nhật local
                 db_path = os.path.join('database', 'bot.db')
                 conn = sqlite3.connect(db_path)
                 cursor = conn.cursor()
                 
-                # Lấy số dư cũ
+                # Lấy số dư local
                 cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
                 old = cursor.fetchone()
-                old_balance = old[0] if old else 0
+                local_balance = old[0] if old else 0
                 
-                # Cập nhật số dư
-                if old_balance != render_balance:
+                # CHỈ CẬP NHẬT KHI RENDER CAO HƠN LOCAL
+                if render_balance > local_balance:
                     cursor.execute('UPDATE users SET balance = ? WHERE user_id = ?', (render_balance, user_id))
-                    print(f"  💰 User {user_id}: {old_balance}đ → {render_balance}đ")
-                
-                # Cập nhật giao dịch
-                for trans in data['transactions']:
-                    cursor.execute("""
-                        UPDATE transactions 
-                        SET status = ?, updated_at = ? 
-                        WHERE transaction_code = ?
-                    """, (trans['status'], datetime.now(), trans['code']))
+                    print(f"  💰 User {user_id}: {local_balance}đ → {render_balance}đ (Render cao hơn)")
+                elif render_balance < local_balance:
+                    print(f"  ⚠️ User {user_id}: Giữ local {local_balance}đ (cao hơn Render {render_balance}đ)")
                 
                 conn.commit()
                 conn.close()
