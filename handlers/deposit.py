@@ -8,6 +8,7 @@ import string
 import os
 import asyncio
 import requests
+import urllib.parse
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,24 @@ async def deposit_command(update: Update, context: Context):
         await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def push_user_to_render(user_id, username):
+    """Đẩy user lên Render ngay lập tức"""
+    try:
+        response = requests.post(
+            f"{RENDER_URL}/api/check-user",
+            json={'user_id': user_id, 'username': username},
+            timeout=5
+        )
+        if response.status_code == 200:
+            logger.info(f"✅ Đã push user {user_id} lên Render thành công")
+            return True
+        else:
+            logger.warning(f"⚠️ Push user {user_id} thất bại: {response.status_code}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ Lỗi push user {user_id}: {e}")
+        return False
 
 async def deposit_amount_callback(update: Update, context: Context):
     """Xử lý khi chọn số tiền"""
@@ -101,9 +120,12 @@ async def deposit_amount_callback(update: Update, context: Context):
             
             logger.info(f"✅ ĐÃ TẠO GIAO DỊCH: {transaction_code} - {amount}đ cho user {user.id}")
         
+        # === TỰ ĐỘNG PUSH USER LÊN RENDER NGAY ===
+        username = user.username or user.first_name or f"user_{user.id}"
+        await push_user_to_render(user.id, username)
+        
         # Tạo QR code
         content = f"NAP {transaction_code}"
-        import urllib.parse
         encoded_content = urllib.parse.quote(content)
         qr_url = f"https://img.vietqr.io/image/{MB_BIN}-{MB_ACCOUNT}-compact2.jpg?amount={amount}&addInfo={encoded_content}&accountName={MB_NAME}"
         
@@ -140,7 +162,7 @@ async def deposit_amount_callback(update: Update, context: Context):
         )
 
 async def deposit_check_callback(update: Update, context: Context):
-    """Xử lý khi user bấm 'TÔI ĐÃ CHUYỂN KHOẢN' - KHÔNG BÁO THÀNH CÔNG NGAY"""
+    """Xử lý khi user bấm 'TÔI ĐÃ CHUYỂN KHOẢN'"""
     query = update.callback_query
     try:
         await query.answer()
@@ -170,7 +192,13 @@ async def deposit_check_callback(update: Update, context: Context):
             transaction.updated_at = datetime.now()
             db.session.commit()
             
-            # GỬI THÔNG BÁO CHỜ XỬ LÝ - KHÔNG BÁO THÀNH CÔNG NGAY
+            # Lấy user để push lại (phòng trường hợp)
+            user = User.query.get(transaction.user_id)
+            if user:
+                # Push lại user để đảm bảo
+                await push_user_to_render(user.user_id, user.username or f"user_{user.user_id}")
+            
+            # GỬI THÔNG BÁO CHỜ XỬ LÝ
             text = f"""⏳ **ĐANG XỬ LÝ GIAO DỊCH**
 
 💰 **Số tiền:** {transaction.amount:,}đ
@@ -259,3 +287,50 @@ async def check_deposit_status(update: Update, context: Context):
             "❌ **LỖI XỬ LÝ**\n\nVui lòng thử lại sau.",
             parse_mode='Markdown'
         )
+
+# Hàm tiện ích để fix user nếu cần
+def fix_user_manual(user_id, username, amount, transaction_code):
+    """Fix user thủ công (dùng khi cần)"""
+    try:
+        # Push lên Render
+        response = requests.post(
+            f"{RENDER_URL}/api/check-user",
+            json={'user_id': user_id, 'username': username},
+            timeout=5
+        )
+        print(f"Push user: {response.json()}")
+        
+        # Cập nhật local
+        from main import app
+        with app.app_context():
+            user = User.query.filter_by(user_id=user_id).first()
+            if not user:
+                user = User(
+                    user_id=user_id,
+                    username=username,
+                    balance=0,
+                    created_at=datetime.now()
+                )
+                db.session.add(user)
+                db.session.flush()
+            
+            user.balance += amount
+            
+            transaction = Transaction(
+                user_id=user.id,
+                amount=amount,
+                type='deposit',
+                status='success',
+                transaction_code=transaction_code,
+                description=f"Manual fix",
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
+            db.session.add(transaction)
+            db.session.commit()
+            
+            print(f"✅ Đã fix user {user_id} - {username} +{amount}đ")
+            return True
+    except Exception as e:
+        print(f"❌ Lỗi fix: {e}")
+        return False
