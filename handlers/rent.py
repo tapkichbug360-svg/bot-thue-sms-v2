@@ -1009,16 +1009,18 @@ async def rent_cancel_callback(update: Update, context: Context):
             api_data = response.json()
             api_success = api_data.get('status') == 200
             
+            # Lấy số dư TRƯỚC khi hủy
+            before_cancel_balance = user.balance
+            
             # Cập nhật trạng thái
             rental.status = 'cancelled'
             rental.updated_at = datetime.now()
             
-            # HOÀN LẠI ĐÚNG SỐ TIỀN (KHÔNG CỘNG THÊM)
-            old_balance = user.balance
-            user.balance += refund  # Chỉ cộng lại số tiền đã trừ
+            # HOÀN LẠI ĐÚNG SỐ TIỀN
+            user.balance += refund
             
             logger.info(f"💰 HOÀN {refund}đ CHO USER {user.user_id}")
-            logger.info(f"   Số dư trước khi hủy: {old_balance}đ → Sau khi hủy: {user.balance}đ (Hoàn: +{refund}đ)")
+            logger.info(f"   Số dư trước hủy: {before_cancel_balance}đ → Sau hủy: {user.balance}đ (Hoàn: +{refund}đ)")
             
             db.session.commit()
             
@@ -1036,7 +1038,8 @@ async def rent_cancel_callback(update: Update, context: Context):
                 f"📞 **Số:** {phone}\n"
                 f"📱 **Dịch vụ:** {service_name}\n"
                 f"💰 **Hoàn tiền:** {refund:,}đ\n"
-                f"💵 **Số dư mới:** {user.balance:,}đ\n\n"
+                f"💵 **Số dư trước hủy:** {before_cancel_balance:,}đ\n"
+                f"💵 **Số dư sau hủy:** {user.balance:,}đ\n\n"
                 f"✅ Đã hoàn tiền vào tài khoản của bạn!",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
@@ -1044,7 +1047,10 @@ async def rent_cancel_callback(update: Update, context: Context):
             
         except Exception as e:
             logger.error(f"❌ Lỗi hủy số: {e}")
-            # Xử lý lỗi...
+            await query.edit_message_text(
+                f"❌ **LỖI HỦY SỐ**\n\n{str(e)}",
+                parse_mode='Markdown'
+            )
 
 async def rent_list_callback(update: Update, context: Context):
     """Hiển thị danh sách số đang thuê"""

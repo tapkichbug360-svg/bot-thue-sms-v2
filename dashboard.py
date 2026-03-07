@@ -870,27 +870,33 @@ def manual():
         now=datetime.now()
     )
 
-@app.route('/add_money', methods=['POST'])
+@dashboard_bp.route('/add_money', methods=['POST'])
 def add_money():
+    """API cộng tiền thủ công - ĐÃ FIX LỖI CỘNG TIỀN"""
     user_id = request.form.get('user_id', type=int)
     amount = request.form.get('amount', type=int)
     reason = request.form.get('reason', 'Cộng tiền thủ công')
     
     if not user_id or not amount or amount < 1000:
-        flash('Vui lòng nhập đủ thông tin', 'danger')
-        return redirect(request.referrer or '/manual')
+        flash('Vui lòng nhập đủ thông tin và số tiền phải >= 1000đ', 'danger')
+        return redirect(request.referrer or url_for('dashboard.manual'))
     
     with app.app_context():
         user = User.query.filter_by(user_id=user_id).first()
         if not user:
-            flash(f'Không tìm thấy user {user_id}', 'danger')
-            return redirect(request.referrer or '/manual')
+            flash(f'Không tìm thấy user có ID {user_id}', 'danger')
+            return redirect(request.referrer or url_for('dashboard.manual'))
         
+        # Lưu số dư cũ
         old_balance = user.balance
+        
+        # CỘNG TIỀN - DÒNG QUAN TRỌNG NHẤT!
         user.balance += amount
         
+        # Tạo transaction code
         transaction_code = f"MANUAL_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
+        # Tạo transaction
         transaction = Transaction(
             user_id=user.id,
             amount=amount,
@@ -903,24 +909,28 @@ def add_money():
         
         db.session.add(transaction)
         db.session.commit()
+        
+        # Refresh để lấy số dư mới nhất
         db.session.refresh(user)
         
         # Đồng bộ lên Render
         try:
+            import requests
             RENDER_URL = "https://bot-thue-sms-v2.onrender.com"
             requests.post(f"{RENDER_URL}/api/check-user", json={'user_id': user.user_id, 'username': user.username}, timeout=3)
-            requests.post(f"{RENDER_URL}/api/sync-pending", json={'transactions': [{
-                'code': transaction_code,
-                'amount': amount,
-                'user_id': user.user_id,
-                'username': user.username
-            }]}, timeout=3)
+            requests.post(f"{RENDER_URL}/api/sync-pending", json={'transactions': [{'code': transaction_code, 'amount': amount, 'user_id': user.user_id, 'username': user.username}]}, timeout=3)
         except:
             pass
         
-        flash(f'💰 NẠP TIỀN THÀNH CÔNG!\n• Số tiền: {amount:,}đ\n• Mã GD: {transaction_code}\n• Số dư mới: {user.balance:,}đ', 'success')
+        logger.info(f"✅ ĐÃ CỘNG {amount}đ CHO USER {user_id}")
+        logger.info(f"   Số dư: {old_balance}đ → {user.balance}đ")
+        
+        flash(f'💰 NẠP TIỀN THÀNH CÔNG!\n'
+              f'• Số tiền: {amount:,}đ\n'
+              f'• Mã GD: {transaction_code}\n'
+              f'• Số dư mới: {user.balance:,}đ', 'success')
     
-    return redirect(request.referrer or '/manual')
+    return redirect(url_for('dashboard.manual'))
 
 @app.route('/toggle_ban', methods=['POST'])
 def toggle_ban():
