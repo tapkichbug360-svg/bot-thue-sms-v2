@@ -1018,7 +1018,7 @@ async def rent_cancel_callback(update: Update, context: Context):
             user.balance += refund  # Chỉ cộng lại số tiền đã trừ
             
             logger.info(f"💰 HOÀN {refund}đ CHO USER {user.user_id}")
-            logger.info(f"   Số dư: {old_balance}đ → {user.balance}đ (chênh lệch: +{refund}đ)")
+            logger.info(f"   Số dư trước khi hủy: {old_balance}đ → Sau khi hủy: {user.balance}đ (Hoàn: +{refund}đ)")
             
             db.session.commit()
             
