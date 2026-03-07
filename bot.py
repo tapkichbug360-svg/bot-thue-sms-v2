@@ -6,25 +6,35 @@ import signal
 import psutil
 import requests
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
-from dotenv import load_dotenv
 from flask import Flask
 from database.models import db, User, Transaction
 
-# Load environment variables
-load_dotenv()
+# === CÁCH ĐƠN GIẢN NHẤT - ĐỌC TRỰC TIẾP FILE ===
+BOT_TOKEN = None
+
+# Đọc trực tiếp file .env
+if os.path.exists('.env'):
+    with open('.env', 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('BOT_TOKEN='):
+                BOT_TOKEN = line.split('=')[1].strip()
+                print(f"✅ Đã đọc BOT_TOKEN từ file: {BOT_TOKEN[:10]}...")
+                break
+
+if not BOT_TOKEN:
+    print("❌ KHÔNG TÌM THẤY BOT_TOKEN trong file .env")
+    print("📁 Nội dung file .env:")
+    if os.path.exists('.env'):
+        with open('.env', 'r') as f:
+            print(f.read())
+    sys.exit(1)
 
 # Cấu hình logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Lấy BOT_TOKEN từ biến môi trường
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-if not BOT_TOKEN:
-    logger.error("❌ KHÔNG TÌM THẤY BOT_TOKEN")
-    sys.exit(1)
-
-# === FIX DATABASE: ĐỒNG BỘ VỚI DASHBOARD ===
-# Tạo Flask app context để dùng chung database với dashboard
+# === DATABASE ===
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 db_path = os.path.join(BASE_DIR, 'database', 'bot.db')
@@ -33,6 +43,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 logger.info(f"✅ Database path: {db_path}")
 
+# Import handlers
 try:
     from handlers.start import start_command
     from handlers.balance import balance_command
@@ -49,7 +60,6 @@ except Exception as e:
     sys.exit(1)
 
 def kill_other_instances():
-    """Kill các instance bot cũ để tránh conflict"""
     current_pid = os.getpid()
     killed = 0
     try:
@@ -69,7 +79,6 @@ def kill_other_instances():
     return killed
 
 def cleanup_telegram():
-    """Cleanup webhook và connection cũ"""
     try:
         close_url = f"https://api.telegram.org/bot{BOT_TOKEN}/close"
         close_res = requests.post(close_url)
@@ -82,7 +91,6 @@ def cleanup_telegram():
         logger.error(f"Cleanup error: {e}")
 
 async def main():
-    """Hàm chính khởi động bot"""
     killed = kill_other_instances()
     if killed > 0:
         logger.info(f"Đã kill {killed} instance cũ")
@@ -91,9 +99,7 @@ async def main():
     try:
         logger.info("🚀 BOT ĐANG KHỞI ĐỘNG...")
         
-        # Tạo application context cho database
         with app.app_context():
-            # Kiểm tra kết nối database
             try:
                 user_count = User.query.count()
                 logger.info(f"✅ Kết nối database thành công! Số user: {user_count}")
@@ -102,13 +108,11 @@ async def main():
         
         application = Application.builder().token(BOT_TOKEN).build()
         
-        # COMMAND HANDLERS
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("balance", balance_command))
         application.add_handler(CommandHandler("deposit", deposit_command))
         application.add_handler(CommandHandler("rent", rent_command))
         
-        # CALLBACK HANDLERS
         application.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
         application.add_handler(CallbackQueryHandler(deposit_amount_callback, pattern="^deposit_amount_"))
         application.add_handler(CallbackQueryHandler(deposit_check_callback, pattern="^deposit_check_"))
