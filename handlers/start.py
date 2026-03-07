@@ -152,3 +152,7 @@ async def help_command(update: Update, context: Context):
         await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+async def check_command(update: Update, context: Context):
+    """Lệnh /check để kiểm tra trạng thái giao dịch"""
+    from handlers.deposit import check_deposit_status
+    await check_deposit_status(update, context)

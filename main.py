@@ -19,7 +19,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from telegram import Update
 
 # Import từ handlers
-from handlers.start import start_command, menu_command, cancel, help_command
+from handlers.start import start_command, menu_command, cancel, help_command, check_command
 from handlers.rent import (
     rent_command, rent_service_callback, rent_network_callback,
     rent_confirm_callback, rent_check_callback, rent_view_callback,
@@ -34,11 +34,11 @@ db_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database')
 if not os.path.exists(db_dir):
     os.makedirs(db_dir)
 
-# ===== ĐỌC FILE .ENV - FIX LỖI FALSE =====
+# ===== ĐỌC FILE .ENV - CHUẨN CHO CẢ LOCAL VÀ RENDER =====
 print("🔧 KIỂM TRA CẤU HÌNH MÔI TRƯỜNG...")
 print("="*50)
 
-# Thử đọc file .env nếu có (khi chạy local)
+# Nếu có file .env (chạy local)
 if os.path.exists(".env"):
     try:
         with open(".env", "r", encoding="utf-8") as f:
@@ -56,14 +56,13 @@ else:
     # Chạy trên Render - lấy từ Environment Variables
     print("☁️ Không tìm thấy file .env, dùng biến môi trường Render")
 
-# Kiểm tra các biến bắt buộc (CHỈ CẢNH BÁO, KHÔNG EXIT)
+# Kiểm tra các biến bắt buộc
 required_vars = ['BOT_TOKEN', 'MB_ACCOUNT', 'MB_NAME', 'MB_BIN', 'SEPAY_TOKEN']
 missing_vars = [var for var in required_vars if not os.getenv(var)]
 
 if missing_vars:
     print(f"⚠️ THIẾU BIẾN MÔI TRƯỜNG: {missing_vars}")
     print("⚠️ Bot sẽ chạy nhưng một số chức năng có thể không hoạt động")
-    print("⚠️ Vui lòng thêm các biến này trên Render Dashboard")
 else:
     print("✅ Tất cả biến môi trường đã sẵn sàng")
 
@@ -645,6 +644,7 @@ if __name__ == '__main__':
     logger.info(f"🌐 Flask server đang chạy trên port {port}")
     logger.info("🚫 Bot Telegram ĐÃ TẮT trên Render - Chỉ chạy local")
     logger.info("📱 Để chạy bot, gõ: python bot.py ở local")
+    logger.info("📝 Lệnh kiểm tra giao dịch: /check MÃ_GD")
 
     # Giữ Flask chạy mãi
     try:
