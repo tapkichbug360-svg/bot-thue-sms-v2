@@ -1,5 +1,0 @@
-# Xóa file cũ
-Remove-Item -Path "railway.json" -Force
-
-# Mở Notepad để tạo file mới
-notepad railway.json
