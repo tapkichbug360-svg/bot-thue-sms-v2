@@ -1,0 +1,194 @@
+﻿from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify, Blueprint, session
+from database.models import db, User, Transaction, Rental
+from datetime import datetime, timedelta
+import os
+import plotly.graph_objs as go
+import plotly.utils
+import json
+from collections import defaultdict
+import secrets
+import logging
+import sqlite3
+import requests
+
+logger = logging.getLogger(__name__)
+
+# Tạo blueprint
+dashboard_bp = Blueprint('dashboard', __name__)
+
+app = Flask(__name__)
+app.secret_key = secrets.token_hex(16)
+
+# Cấu hình database
+db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database', 'bot.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db.init_app(app)
+
+# BASE TEMPLATE
+BASE_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Thuê SMS - Dashboard Quản Lý</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap    
+    with app.app_context():
+        user = User.query.filter_by(user_id=user_id).first()
+        if not user:
+            flash(f'Không tìm thấy user có ID {user_id}', 'danger')
+            return redirect(request.referrer or url_for('dashboard.manual'))
+        
+        # Lưu số dư cũ
+        old_balance = user.balance
+        
+        # CỘNG TIỀN
+        user.balance += amount
+        
+        # Tạo transaction code
+        transaction_code = f"MANUAL_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        # Tạo transaction
+        transaction = Transaction(
+            user_id=user.id,
+            amount=amount,
+            type='deposit',
+            status='success',
+            transaction_code=transaction_code,
+            description=reason,
+            created_at=datetime.now()
+        )
+        
+        db.session.add(transaction)
+        db.session.commit()
+        
+        # LẤY SỐ DƯ MỚI NHẤT
+        db.session.refresh(user)
+        
+        # ĐỒNG BỘ LÊN RENDER
+        try:
+            import requests
+            RENDER_URL = "https://bot-thue-sms-v2.onrender.com"
+            
+            # Push user
+            requests.post(
+                f"{RENDER_URL}/api/check-user",
+                json={'user_id': user.user_id, 'username': user.username},
+                timeout=3
+            )
+            
+            # Push transaction
+            requests.post(
+                f"{RENDER_URL}/api/sync-pending",
+                json={'transactions': [{
+                    'code': transaction_code,
+                    'amount': amount,
+                    'user_id': user.user_id,
+                    'username': user.username
+                }]},
+                timeout=3
+            )
+        except Exception as e:
+            logger.error(f"⚠️ Không thể push lên Render: {e}")
+        
+        logger.info(f"✅ ĐÃ CỘNG {amount}đ CHO USER {user_id}")
+        logger.info(f"   Số dư: {old_balance}đ → {user.balance}đ")
+        
+        # FLASH MESSAGE VỚI SỐ DƯ MỚI
+        flash(f'💰 NẠP TIỀN THÀNH CÔNG!\n'
+              f'• Số tiền: {amount:,}đ\n'
+              f'• Mã GD: {transaction_code}\n'
+              f'• Số dư mới: {user.balance:,}đ', 'success')
+    
+    return redirect(url_for('dashboard.manual'))
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
+
+
+
+
+@dashboard_bp.route('/add_money', methods=['POST'])
+def add_money():
+    """API cộng tiền thủ công - ĐÃ FIX ĐẦY ĐỦ"""
+    user_id = request.form.get('user_id', type=int)
+    amount = request.form.get('amount', type=int)
+    reason = request.form.get('reason', 'Cộng tiền thủ công')
+    
+    if not user_id or not amount or amount < 1000:
+        flash('Vui lòng nhập đủ thông tin và số tiền phải >= 1000đ', 'danger')
+        return redirect(request.referrer or url_for('dashboard.manual'))
+    
+    with app.app_context():
+        user = User.query.filter_by(user_id=user_id).first()
+        if not user:
+            flash(f'Không tìm thấy user có ID {user_id}', 'danger')
+            return redirect(request.referrer or url_for('dashboard.manual'))
+        
+        # Lưu số dư cũ
+        old_balance = user.balance
+        
+        # CỘNG TIỀN
+        user.balance += amount
+        
+        # Tạo transaction code
+        transaction_code = f"MANUAL_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        # Tạo transaction
+        transaction = Transaction(
+            user_id=user.id,
+            amount=amount,
+            type='deposit',
+            status='success',
+            transaction_code=transaction_code,
+            description=reason,
+            created_at=datetime.now()
+        )
+        
+        db.session.add(transaction)
+        db.session.commit()
+        
+        # LẤY SỐ DƯ MỚI NHẤT
+        db.session.refresh(user)
+        
+        # ĐỒNG BỘ LÊN RENDER
+        try:
+            import requests
+            RENDER_URL = "https://bot-thue-sms-v2.onrender.com"
+            
+            # Push user
+            requests.post(
+                f"{RENDER_URL}/api/check-user",
+                json={'user_id': user.user_id, 'username': user.username},
+                timeout=3
+            )
+            
+            # Push transaction
+            requests.post(
+                f"{RENDER_URL}/api/sync-pending",
+                json={'transactions': [{
+                    'code': transaction_code,
+                    'amount': amount,
+                    'user_id': user.user_id,
+                    'username': user.username
+                }]},
+                timeout=3
+            )
+        except Exception as e:
+            logger.error(f"⚠️ Không thể push lên Render: {e}")
+        
+        logger.info(f"✅ ĐÃ CỘNG {amount}đ CHO USER {user_id}")
+        logger.info(f"   Số dư: {old_balance}đ → {user.balance}đ")
+        
+        # FLASH MESSAGE VỚI SỐ DƯ MỚI
+        flash(f'💰 NẠP TIỀN THÀNH CÔNG!
+'
+              f'• Số tiền: {amount:,}đ
+'
+              f'• Mã GD: {transaction_code}
+'
+              f'• Số dư mới: {user.balance:,}đ', 'success')
+    
+    return redirect(url_for('dashboard.manual'))
+
