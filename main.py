@@ -5,7 +5,7 @@ import atexit
 import asyncio
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Flask, request, jsonify
 from database.models import db, User, Rental, Transaction
 from handlers.sepay import setup_sepay_webhook
@@ -29,9 +29,8 @@ from handlers.rent import (
 from handlers.balance import balance_command
 from handlers.deposit import deposit_command, deposit_amount_callback, deposit_check_callback
 from handlers.callback import menu_callback
-# Đầu file, thêm imports
-from datetime import datetime, timedelta, timezone
-# Load từ file .env (nếu có)
+
+# Load từ file .env (nếu có) - CÁCH CHUẨN DUY NHẤT
 load_dotenv()
 
 # Đọc biến môi trường, nếu không có thì báo lỗi
@@ -59,47 +58,20 @@ VN_TZ = timezone(timedelta(hours=7))
 def get_vn_time():
     """Lấy thời gian Việt Nam hiện tại"""
     return datetime.now(VN_TZ).replace(tzinfo=None)
+
 # Tạo thư mục database
 db_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database')
 if not os.path.exists(db_dir):
     os.makedirs(db_dir)
 
-# ===== ĐỌC FILE .ENV - CHUẨN CHO CẢ LOCAL VÀ RENDER =====
-print("🔧 KIỂM TRA CẤU HÌNH MÔI TRƯỜNG...")
-print("="*50)
-
-if os.path.exists(".env"):
-    try:
-        with open(".env", "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    key, value = line.split("=", 1)
-                    os.environ[key] = value.strip()
-                    print(f"✅ Đã đọc từ .env: {key}")
-        print("📦 Dùng cấu hình từ file .env (local mode)")
-    except Exception as e:
-        print(f"⚠️ Lỗi đọc .env: {e}")
-        print("☁️ Chuyển sang dùng biến môi trường Render")
-else:
-    print("☁️ Không tìm thấy file .env, dùng biến môi trường Render")
-
-required_vars = ['BOT_TOKEN', 'MB_ACCOUNT', 'MB_NAME', 'MB_BIN', 'SEPAY_TOKEN']
-missing_vars = [var for var in required_vars if not os.getenv(var)]
-
-if missing_vars:
-    print(f"⚠️ THIẾU BIẾN MÔI TRƯỜNG: {missing_vars}")
-else:
-    print("✅ Tất cả biến môi trường đã sẵn sàng")
-
-print("="*50)
-
+# ===== CẤU HÌNH LOGGING =====
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+# ===== KHỞI TẠO FLASK APP =====
 app = Flask(__name__)
 
 db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database', 'bot.db')
@@ -118,6 +90,7 @@ with app.app_context():
         else:
             logger.error(f"LỖI TẠO DATABASE: {e}")
 
+# ===== THIẾT LẬP WEBHOOK SEPAY =====
 setup_sepay_webhook(app)
 
 @app.route('/')
