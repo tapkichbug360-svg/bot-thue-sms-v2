@@ -30,7 +30,7 @@ from handlers.balance import balance_command
 from handlers.deposit import deposit_command, deposit_amount_callback, deposit_check_callback
 from handlers.callback import menu_callback
 
-# === ĐỌC TRỰC TIẾP TỪ FILE .ENV (CÁCH CŨ ĐÃ HOẠT ĐỘNG) ===
+# === CÁCH 1: ĐỌC TRỰC TIẾP TỪ FILE .ENV ===
 print("📁 Đang đọc file .env...")
 
 BOT_TOKEN = None
@@ -702,3 +702,4 @@ if __name__ == '__main__':
             time.sleep(60)
     except KeyboardInterrupt:
         logger.info("👋 Đã dừng Flask server")
+# AUTO DEPLOY 20260309-185241 - fresh start
